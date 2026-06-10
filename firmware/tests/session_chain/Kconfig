@@ -1,0 +1,9 @@
+mainmenu "session_chain ztest"
+
+# Mirror of firmware/Kconfig:CANTIL_TEST_INJECT_NOISE_KEYS (see the same note in
+# firmware/tests/noise_session/Kconfig). session.c keys off this via #ifdef.
+config CANTIL_TEST_INJECT_NOISE_KEYS
+	bool "Test-only: inject Noise static + ephemeral keypairs + identity chain"
+	default y
+
+source "Kconfig.zephyr"

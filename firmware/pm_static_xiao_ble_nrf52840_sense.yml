@@ -1,0 +1,29 @@
+# Partition Manager static layout for Seeed XIAO BLE Sense.
+#
+# The board DTS includes nrf52840_partition_uf2_sdv7.dtsi which assumes
+# SoftDevice S140 v7 is present (156 KB, 0x0–0x26FFF) and places the app at
+# 0x27000.  But the factory UF2 bootloader on this board (v0.6.1, Nov 2021)
+# was built WITHOUT SoftDevice — it only reserves a 4 KB Nordic MBR at 0x0
+# and places the app immediately at 0x1000.
+#
+# CURRENT.UF2 served by the bootloader confirms: app starts at 0x1000.
+# INFO_UF2.TXT confirms: "SoftDevice: not found".
+#
+# Overriding the app to start at 0x1000 here forces PM_APP_ADDRESS = 0x1000,
+# which propagates to the linker (ORIGIN = 0x1000) and UF2 target address,
+# so the bootloader actually boots our code.
+#
+# Flash layout (actual, per this bootloader):
+#   0x00000000  Nordic MBR             4 KB
+#   0x00001000  Application          972 KB  ← "app" placed here by PM
+#   0x000f4000  UF2 bootloader        48 KB
+
+mbr:
+  address: 0x0
+  size: 0x1000
+  region: flash_primary
+
+uf2_bootloader:
+  address: 0xf4000
+  size: 0xc000
+  region: flash_primary

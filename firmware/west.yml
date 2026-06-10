@@ -1,0 +1,24 @@
+manifest:
+  version: "0.13"
+
+  remotes:
+    - name: nrfconnect
+      url-base: https://github.com/nrfconnect
+    - name: rweather
+      url-base: https://github.com/rweather
+
+  projects:
+    - name: sdk-nrf
+      remote: nrfconnect
+      revision: v3.0.2
+      import: true
+
+    # Noise protocol framework — BSD licensed, no formal releases, pinned to latest master.
+    # Used for Noise_XX session encryption via the noise_crypto_noisec backend.
+    - name: noise-c
+      remote: rweather
+      revision: cfe25410979a87391bb9ac8d4d4bef64e9f268c6
+      path: modules/noise-c
+
+  self:
+    path: cantil

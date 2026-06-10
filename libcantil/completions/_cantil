@@ -1,0 +1,202 @@
+#compdef cantil
+# Zsh completion for the cantil CLI (Cantil hardware CA host client).
+# Install: copy to a directory in $fpath, e.g. /usr/local/share/zsh/site-functions/_cantil
+
+_cantil_port() {
+    local -a ports
+    ports=(/dev/ttyACM*(N) /dev/ttyUSB*(N))
+    if (( ${#ports} )); then
+        _values 'serial port' "${ports[@]}"
+    else
+        _files
+    fi
+}
+
+_cantil_hex_pubkey() {
+    _message '64-character hex Curve25519 public key'
+}
+
+_cantil_slot() {
+    _message 'key slot number (0..63)'
+}
+
+_cantil_trust_opts=(
+    '--trust[trust tier]:tier:(none pin ca ca+cn)'
+    '--ca-dir[directory of *.der CA certs (Tier 3/4)]:directory:_files -/'
+    '--ca-cert[single DER CA cert file (Tier 3/4)]:file:_files -g "*.der"'
+    '--cn[expected leaf CN for Tier 4]:cn string'
+    '--client-cert[client identity DER cert (Method 4/5)]:file:_files -g "*.der"'
+    '--client-chain[client cert DER chain]:file:_files -g "*.der"'
+)
+
+_cantil_commands=(
+    'list:enumerate attached Cantil USB devices'
+    'pair:pair with a device and store its fingerprint'
+    'status:show device status'
+    'random:read N random bytes from the device TRNG (hex)'
+    'provision-ca:provision a key slot as a CA'
+    'sign-key-slot:sign subject slot cert with issuer CA slot (on-device)'
+    'protect:protect a key slot (tap-confirm)'
+    'unprotect:unprotect a key slot (tap-confirm)'
+    'key-chain:fetch slot cert chain DER (hex, leaf first)'
+    'sign-csr-slot:sign an external CSR with a CA key slot'
+    'session-cert:fetch device session certificate DER (hex)'
+    'session-csr:fetch device session CSR DER (hex)'
+    'ca-cert:fetch CA certificate DER (hex)'
+    'session-sign:CA-sign device session cert with an on-device slot (tap-confirm)'
+    'session-push:install externally-signed session cert (tap-confirm)'
+    'clients:list bonded clients'
+    'unpair:remove a client bond (tap-confirm)'
+    'name:set friendly name for a bonded client'
+    'roundtrip:debug: send a raw roundtrip and measure latency'
+)
+
+_cantil() {
+    local curcontext="$curcontext" state line
+    typeset -A opt_args
+
+    _arguments -C \
+        '1:command:->command' \
+        '*::args:->args'
+
+    case $state in
+        command)
+            _describe 'cantil command' _cantil_commands
+            ;;
+        args)
+            case $words[1] in
+                list)
+                    # no arguments
+                    ;;
+
+                pair)
+                    _arguments \
+                        '--force[re-pair, overwriting stored device key]' \
+                        '--passkey[6-digit passkey (Method 3 devices)]:digits' \
+                        '--client-cert[client identity DER cert (Method 4/5)]:file:_files -g "*.der"' \
+                        '--client-chain[client cert DER chain]:file:_files -g "*.der"' \
+                        ':port:_cantil_port'
+                    ;;
+
+                status)
+                    _arguments \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                random)
+                    _arguments \
+                        ':n:_message "number of bytes (1..256)"' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                provision-ca)
+                    _arguments \
+                        '--new[generate a fresh key in the next free slot]' \
+                        '--cn[subject Common Name (required)]:CN' \
+                        '--o[subject Organisation]:org' \
+                        '--ou[subject Organisational Unit]:ou' \
+                        '--c[subject Country (2-letter)]:cc' \
+                        '--st[subject State or Province]:state' \
+                        '--l[subject Locality]:locality' \
+                        '--validity[certificate validity in days]:days' \
+                        '--path-len[Basic Constraints pathLenConstraint (-1=unconstrained)]:n' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                sign-key-slot)
+                    _arguments \
+                        ':issuer_slot:_cantil_slot' \
+                        ':subject_slot:_cantil_slot' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                protect)
+                    _arguments \
+                        ':slot:_cantil_slot' \
+                        '--certs[also protect certs issued by this slot]' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                unprotect)
+                    _arguments \
+                        ':slot:_cantil_slot' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                key-chain)
+                    _arguments \
+                        ':slot:_cantil_slot' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                sign-csr-slot)
+                    _arguments \
+                        ':issuer_slot:_cantil_slot' \
+                        ':csr.der:_files -g "*.der"' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                session-cert|session-csr|ca-cert)
+                    _arguments \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                session-sign)
+                    _arguments \
+                        ':issuer_slot:_cantil_slot' \
+                        '--force[re-sign even if already CA-signed]' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                session-push)
+                    _arguments \
+                        ':cert.der:_files -g "*.der"' \
+                        '--chain[DER chain to install with cert]:chain.der:_files -g "*.der"' \
+                        '--force[install even if CA-signed cert already present]' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                clients)
+                    _arguments \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                unpair)
+                    _arguments \
+                        ':hex-pubkey:_cantil_hex_pubkey' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                name)
+                    _arguments \
+                        ':hex-pubkey:_cantil_hex_pubkey' \
+                        ':friendly name' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+
+                roundtrip)
+                    _arguments \
+                        ':count:_message "roundtrip count (1..65535)"' \
+                        "${_cantil_trust_opts[@]}" \
+                        ':port:_cantil_port'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_cantil "$@"

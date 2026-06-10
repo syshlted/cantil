@@ -1,0 +1,22 @@
+mainmenu "client_bond ztest"
+
+config CANTIL_MAX_KEY_SLOTS
+	int "Maximum number of key slots"
+	default 8
+	range 1 64
+
+config CANTIL_MAX_CLIENT_BONDS
+	int "Maximum number of host-client bonds"
+	default 2
+	range 1 16
+
+config CANTIL_MAX_PEER_BONDS
+	int "Maximum number of peer-device bonds"
+	default 2
+	range 1 8
+
+config CANTIL_CRL_VALIDITY_SEC
+	int "CRL nextUpdate window (seconds)"
+	default 86400
+
+source "Kconfig.zephyr"

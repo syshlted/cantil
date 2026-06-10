@@ -1,0 +1,143 @@
+/* XIAO BLE Sense application overlay
+ *
+ * The board DTS (xiao_ble_common.dtsi + xiao_ble_nrf52840_sense.dts) already
+ * defines: RGB LEDs (led0/1/2), QSPI flash (p25q16h), LSM6DS3TR-C on i2c0
+ * at 0x6a with irq on gpio0 11, and the USBD node with board_cdc_acm_uart.
+ *
+ * This overlay only adds application-specific aliases.
+ */
+
+/ {
+	/* External momentary push-button wired between XIAO D0 (P0.02) and GND.
+	 * Internal pull-up; pressed = logical-high after active-low inversion. */
+	cantil_tap: tap-button {
+		compatible = "cantil,tap-button";
+		gpios = <&gpio0 2 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+		debounce-ms = <20>;
+		double-tap-ms = <300>;
+	};
+
+	aliases {
+		/* RGB channels — driven by PWM (pwm0 ch0/1/2) for HSV rendering.
+		 * cantil-led aliases the red PWM channel so legacy diag-flash callers
+		 * keep working unchanged. */
+		cantil-led    = &cantil_pwm_led_r;
+		cantil-led-r  = &cantil_pwm_led_r;
+		cantil-led-g  = &cantil_pwm_led_g;
+		cantil-led-b  = &cantil_pwm_led_b;
+		cantil-tap    = &cantil_tap;
+	};
+
+	/* Replace the board's single-channel pwmleds with our 3-channel RGB.
+	 * The board's pwm_led0 (also on pwm0 ch0) is disabled below to avoid
+	 * two pwm-leds children fighting over the same channel. */
+	cantil_pwmleds: cantil-pwmleds {
+		compatible = "pwm-leds";
+		cantil_pwm_led_r: cantil_pwm_led_r {
+			pwms = <&pwm0 0 PWM_MSEC(20) PWM_POLARITY_INVERTED>;
+		};
+		cantil_pwm_led_g: cantil_pwm_led_g {
+			pwms = <&pwm0 1 PWM_MSEC(20) PWM_POLARITY_INVERTED>;
+		};
+		cantil_pwm_led_b: cantil_pwm_led_b {
+			pwms = <&pwm0 2 PWM_MSEC(20) PWM_POLARITY_INVERTED>;
+		};
+	};
+
+	chosen {
+		/*
+		 * Tell the NCS Partition Manager which device is external flash
+		 * so CONFIG_PM_PARTITION_REGION_LITTLEFS_EXTERNAL can use it.
+		 */
+		nordic,pm-ext-flash = &p25q16h;
+
+		/*
+		 * Override the board DTS code-partition.
+		 *
+		 * The board DTS includes nrf52840_partition_uf2_sdv7.dtsi which
+		 * places the app at 0x27000 (after the S140 SoftDevice region).
+		 * But the factory UF2 bootloader on this board (v0.6.1) has no
+		 * SoftDevice — it reserves only a 4 KB Nordic MBR at 0x0 and
+		 * expects the app at 0x1000.  Pointing code-partition here makes
+		 * CONFIG_FLASH_LOAD_OFFSET=0x1000, so the UF2 targets 0x1000 and
+		 * the bootloader actually runs our firmware.
+		 */
+		zephyr,code-partition = &xiao_app_partition;
+
+		/*
+		 * Dual CDC ACM split:
+		 *   ACM #0 (board_cdc_acm_uart) → protocol channel, Noise bytes only
+		 *   ACM #1 (cdc_acm_uart1)      → console + log backend
+		 *
+		 * The board's cdc_acm_serial.dtsi assigns zephyr,console to
+		 * board_cdc_acm_uart by default; we override that here so log
+		 * output cannot corrupt the protocol stream.  shell-uart and the
+		 * BT/mcumgr UART aliases also need redirecting for the same reason.
+		 */
+		zephyr,console        = &cdc_acm_uart1;
+		zephyr,shell-uart     = &cdc_acm_uart1;
+		zephyr,uart-mcumgr    = &cdc_acm_uart1;
+		zephyr,bt-mon-uart    = &cdc_acm_uart1;
+		zephyr,bt-c2h-uart    = &cdc_acm_uart1;
+		cantil,protocol-uart   = &board_cdc_acm_uart;
+	};
+};
+
+/* Disable the board's gpio-leds (led0/1/2) so PWM owns GPIOs 0:26/30/6.
+ * gpio-leds would configure them as GPIO_OUTPUT and steal them from pwm0. */
+&led0 { status = "disabled"; };
+&led1 { status = "disabled"; };
+&led2 { status = "disabled"; };
+
+/* Disable the board's single-channel pwm_led0 (also pwm0 ch0) — superseded
+ * by cantil_pwm_led_r above. */
+&pwm_led0 { status = "disabled"; };
+
+/* Repoint pwm0 from board's GPIO 0:17 to the three RGB LED pins.
+ * Active-low LEDs → nordic,invert so duty=full means LED fully on. */
+&pinctrl {
+	pwm0_default: pwm0_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 26)>,  /* Red   */
+				<NRF_PSEL(PWM_OUT1, 0, 30)>,  /* Green */
+				<NRF_PSEL(PWM_OUT2, 0, 6)>;   /* Blue  */
+			nordic,invert;
+		};
+	};
+
+	pwm0_sleep: pwm0_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 26)>,
+				<NRF_PSEL(PWM_OUT1, 0, 30)>,
+				<NRF_PSEL(PWM_OUT2, 0, 6)>;
+			low-power-enable;
+		};
+	};
+};
+
+&pwm0 {
+	status = "okay";
+	pinctrl-0 = <&pwm0_default>;
+	pinctrl-1 = <&pwm0_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&zephyr_udc0 {
+	cdc_acm_uart1: cdc_acm_uart1 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
+
+/* Enable PDM peripheral for mic-based tap input (tap_mic.c). */
+&pdm0 {
+	status = "okay";
+};
+
+&flash0 {
+	partitions {
+		xiao_app_partition: partition@1000 {
+			label = "Application";
+			reg = <0x00001000 0x000F3000>;
+		};
+	};
+};
