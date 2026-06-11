@@ -1,0 +1,12 @@
+mainmenu "noise_session ztest"
+
+# Mirror of firmware/Kconfig:CANTIL_TEST_INJECT_NOISE_KEYS — defined locally so
+# this test app can be built standalone against Kconfig.zephyr without pulling
+# in the full firmware Kconfig tree (USB/BLE/storage etc).  Keep the symbol
+# name in sync with the production definition; session.c keys off it via
+# #ifdef regardless of which Kconfig tree defined it.
+config CANTIL_TEST_INJECT_NOISE_KEYS
+	bool "Test-only: inject Noise static + ephemeral keypairs"
+	default y
+
+source "Kconfig.zephyr"

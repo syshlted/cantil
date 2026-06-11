@@ -1,0 +1,43 @@
+mainmenu "pairing ztest"
+
+config CANTIL_MAX_KEY_SLOTS
+	int "Maximum number of key slots"
+	default 8
+	range 1 64
+
+config CANTIL_MAX_CLIENT_BONDS
+	int "Maximum number of host-client bonds"
+	default 2
+	range 1 16
+
+config CANTIL_MAX_PEER_BONDS
+	int "Maximum number of peer-device bonds"
+	default 2
+	range 1 8
+
+config CANTIL_CRL_VALIDITY_SEC
+	int "CRL nextUpdate window (seconds)"
+	default 86400
+
+# Pairing method symbols (flat booleans — no choice wrapper in test context).
+config PAIRING_PROMISCUOUS
+	bool "Method 0 — Promiscuous"
+	default n
+
+config PAIRING_TOFU
+	bool "Method 1 — Silent TOFU"
+	default n
+
+config PAIRING_TAP_CONFIRM
+	bool "Method 2 — Tap-confirmed bond"
+	default n
+
+config PAIRING_PASSKEY
+	bool "Method 3 — Passkey + tap-confirmed bond"
+	default n
+
+config CANTIL_PAIR_TIMEOUT_SEC
+	int "Pairing prompt timeout (seconds)"
+	default 30
+
+source "Kconfig.zephyr"

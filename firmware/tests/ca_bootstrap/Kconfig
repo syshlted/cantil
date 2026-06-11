@@ -1,0 +1,16 @@
+mainmenu "ca_bootstrap ztest"
+
+# Mirror of firmware/Kconfig:CANTIL_MAX_KEY_SLOTS — defined locally so this
+# test app can be built standalone against Kconfig.zephyr without pulling in
+# the full firmware Kconfig tree (USB/BLE/IMU etc).  Keep the symbol name in
+# sync with the production definition; storage.c keys off it via CONFIG_*.
+config CANTIL_MAX_KEY_SLOTS
+	int "Maximum number of key slots"
+	default 8
+	range 1 64
+
+config CANTIL_CRL_VALIDITY_SEC
+	int "CRL nextUpdate window (seconds)"
+	default 86400
+
+source "Kconfig.zephyr"

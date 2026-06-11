@@ -1,0 +1,22 @@
+mainmenu "session_recovery ztest"
+
+# Mirror of firmware/Kconfig:CANTIL_MAX_KEY_SLOTS — defined locally so this
+# test app can be built standalone against Kconfig.zephyr without pulling in
+# the full firmware Kconfig tree (USB/BLE/IMU etc). Keep in sync with the
+# production definition; ca.c / storage.c key off it via CONFIG_*.
+config CANTIL_MAX_KEY_SLOTS
+	int "Maximum number of key slots"
+	default 8
+	range 1 64
+
+config CANTIL_CRL_VALIDITY_SEC
+	int "CRL nextUpdate window (seconds)"
+	default 86400
+
+# This test app exercises the T-03 *strict* recovery path, so force it on here
+# (the production default lives in firmware/Kconfig + the release .conf).
+config CANTIL_SESSION_X509_STRICT
+	bool
+	default y
+
+source "Kconfig.zephyr"

@@ -1,0 +1,14 @@
+/* Additive overlay for the PDM smoke-test build.
+ *
+ * Pass via -DEXTRA_DTC_OVERLAY_FILE=boards/xiao_ble_nrf52840_sense_pdm_smoketest.overlay
+ * so it merges on top of the standard board overlay (which keeps the LED
+ * aliases and the UF2-bootloader code-partition fix in place).
+ *
+ * Zephyr FILE_SUFFIX in NCS v3.0.2 selects per-FILE_SUFFIX Kconfig fragments
+ * but not per-FILE_SUFFIX board overlays — EXTRA_DTC_OVERLAY_FILE is the
+ * canonical way to layer this on.
+ */
+
+&pdm0 {
+	status = "okay";
+};

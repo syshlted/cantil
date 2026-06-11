@@ -1,0 +1,45 @@
+/*
+ * MCUboot image DTS overlay — XIAO BLE Sense (nrf52840).
+ *
+ * The board's base DTS targets the Adafruit UF2-only boot chain and has no
+ * MCUboot partition labels.  MCUboot's CMakeLists.txt unconditionally calls
+ * dt_nodelabel("slot0_partition") at cmake configure time (before the NCS
+ * Partition Manager's post_cmake hook fires), so the nodes must exist in a
+ * sysbuild-level overlay that is applied before image configure.
+ *
+ * Sizes here use the mcuboot layout (both slots on internal flash).
+ * PM overrides the linker placement at build time for all tiers, so these
+ * values are only consulted for cmake-time constants:
+ *   CONFIG_BOOT_MAX_IMG_SECTORS_AUTO (disabled; we set =256 explicitly)
+ *   MCUBOOT_SLOTx_EXPECTED_ERASE_SIZE (from parent flash device, same value
+ *                                       for both internal and QSPI on nRF52)
+ *
+ * The existing UF2 boot_partition (0xF4000) and code_partition (0x27000)
+ * are removed to avoid label conflicts.
+ */
+
+/delete-node/ &code_partition;
+/delete-node/ &boot_partition;
+
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+	};
+};
+
+&flash0 {
+	partitions {
+		boot_partition: partition@1000 {
+			label = "mcuboot";
+			reg = <0x00001000 0x0000C000>;
+		};
+		slot0_partition: partition@d000 {
+			label = "image-0";
+			reg = <0x0000D000 0x00079800>;
+		};
+		slot1_partition: partition@86800 {
+			label = "image-1";
+			reg = <0x00086800 0x00079800>;
+		};
+	};
+};

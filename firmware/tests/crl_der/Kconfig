@@ -1,0 +1,20 @@
+mainmenu "crl_der ztest"
+
+# Mirror the production CANTIL_* knobs used by ca.c and storage.c — defined
+# locally so this test app can be built standalone against Kconfig.zephyr
+# without pulling in the full firmware Kconfig tree (USB/BLE/IMU/etc).
+config CANTIL_MAX_KEY_SLOTS
+	int "Maximum number of key slots"
+	default 8
+	range 1 64
+
+config CANTIL_CRL_VALIDITY_SEC
+	int "CRL nextUpdate window (seconds)"
+	default 86400
+	range 60 31536000
+
+config CANTIL_REVOKE_REQUIRE_NOW_UNIX
+	bool "Require host-supplied revocation timestamp on REVOKE_CERT"
+	default n
+
+source "Kconfig.zephyr"

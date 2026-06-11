@@ -1,0 +1,25 @@
+# Python packages not available as Ubuntu apt packages.
+# Install into the project venv:
+#
+#   python3 -m venv venv
+#   . venv/bin/activate
+#   pip install -r requirements.txt
+#
+# When working inside the ubuntu2604 distrobox, activate the venv first:
+#
+#   . /path/to/cantil/venv/bin/activate
+#
+# Claude Code activates this venv automatically via .claude/settings.json.
+
+# MCUboot image signing tool (imgtool)
+imgtool==2.4.0
+
+# Nordic Semiconductor DFU + package generation
+nrfutil==5.2.0
+
+# nrfutil 5.2.0 pins pyyaml~=4.2b1, but PyYAML 4.x calls
+# collections.Hashable which was removed in Python 3.10+ — the venv runs on
+# 3.14, so Zephyr's build (list_hardware.py) crashes during board lookup with
+# that pin.  Force a modern PyYAML; nrfutil's imports still work fine.  Pin
+# applied after nrfutil so pip's resolver records the override.
+pyyaml>=6.0.1

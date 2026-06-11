@@ -1,0 +1,70 @@
+# Claude Code items
+CLAUDE.md
+MEMORY.md
+.claude/
+.claudeignore
+
+# Internal-only documentation (not for public release)
+internal/
+
+# Python venv — never commit
+venv/
+
+# Zephyr/west build artefacts
+build/
+build_*/
+.west/
+twister-out/
+
+# Python bytecode caches
+__pycache__/
+*.pyc
+
+# nRF Connect SDK workspace (fetched by west update, ~10GB)
+# Add specific SDK dirs here if they end up inside the repo root
+bootloader/
+modules/
+nrf/
+nrfxlib/
+zephyr/
+mbedtls/
+tfm/
+mcuboot/
+
+# Editor
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+
+# Build outputs that might land in source tree
+*.bin
+*.hex
+*.elf
+*.map
+zephyr.signed.bin
+
+# AppImage build artefacts
+cantil-*.AppImage
+
+# Signing keys — never commit
+*.pem
+*.key
+signing_key*
+prod_signing_key*
+
+# Internal docs
+conversations/
+reference/
+storage.md
+transport-and-pairing.md
+open-questions.md
+
+# A few internal scripts
+scripts/dbox.sh
+scripts/export_transcript.sh
+scripts/publish-prep.sh
+scripts/publish.sh
+

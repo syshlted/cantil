@@ -1,0 +1,36 @@
+/*
+ * Enlarge the sim flash + give storage_partition enough room for LittleFS.
+ * Default native_sim layout puts storage_partition at 16 KB which is too
+ * small to comfortably hold the slot 0 bootstrap blobs (key+meta+x509+cert).
+ *
+ * We don't need MCUboot here, so the layout is just: code at the bottom,
+ * 512 KB of storage at the top.
+ */
+
+&flashcontroller0 {
+	reg = <0x00000000 DT_SIZE_K(2048)>;
+};
+
+&flash0 {
+	reg = <0x00000000 DT_SIZE_K(2048)>;
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		/delete-node/ partition@0;
+		/delete-node/ partition@c000;
+		/delete-node/ partition@75000;
+		/delete-node/ partition@de000;
+		/delete-node/ partition@fc000;
+
+		slot0_partition: partition@0 {
+			label = "image-0";
+			reg = <0x00000000 0x00180000>;
+		};
+		storage_partition: partition@180000 {
+			label = "storage";
+			reg = <0x00180000 0x00080000>;
+		};
+	};
+};
