@@ -1,0 +1,20 @@
+/* Adafruit Feather nRF52840 Express overlay
+ *
+ * User switch (SW1) on P1.02 used for tap input.
+ * LED (D13 / blue, P1.10) for status.
+ * TODO: Verify SPI flash CS pin; GD25Q16C may differ by board revision.
+ */
+
+/ {
+	cantil_tap: tap-button {
+		compatible = "cantil,tap-button";
+		gpios = <&gpio1 2 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+		debounce-ms = <20>;
+		double-tap-ms = <300>;
+	};
+
+	aliases {
+		cantil-tap = &cantil_tap;
+		cantil-led  = &led0;
+	};
+};

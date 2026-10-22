@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Jeremy Melanson
+#
+# Licensing for files that cannot carry an in-file header (lock files,
+# dotfiles, configs, data) and for the parts that are not ours. Files with
+# their own SPDX header keep it; "aggregate" adds the copyright line below
+# to files that have a license tag but no copyright. Later annotations win.
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Jeremy Melanson"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Pigweed's Bazel flags, carried over verbatim (Apache-2.0 header in-file).
+[[annotations]]
+path = [".bazelrc", "common.bazelrc"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 The Pigweed Authors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Zephyr's clang-format config and our patch against zephyr-bazel.
+[[annotations]]
+path = [".clang-format", "bazel/zephyr-bazel-cantil.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Zephyr Project contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Name lists derived from US Social Security Administration published data
+# (US government work, public domain).
+[[annotations]]
+path = ["contrib/names.txt", "contrib/www.ssa.gov - Top Baby Names for 2025.html"]
+precedence = "override"
+SPDX-FileCopyrightText = "US Social Security Administration"
+SPDX-License-Identifier = "CC0-1.0"

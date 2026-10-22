@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Wire-protocol CBOR codec conformance on native_sim.
+# Mirrors firmware/tests/protocol_cbor/CMakeLists.txt (scripts/test.sh stays the
+# reference runner). See //firmware/tests:ztest.bzl.
+
+load("//firmware/tests:ztest.bzl", "cantil_ztest", "CBOR_DEPS", "CBOR_SRCS")
+
+package(default_visibility = ["//visibility:public"])
+
+cantil_ztest(
+    name = "protocol_cbor",
+    srcs = ["src/main.c"] + CBOR_SRCS,
+    deps = CBOR_DEPS,
+)

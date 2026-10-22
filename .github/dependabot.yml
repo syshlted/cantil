@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Keeps the SHA-pinned actions in .github/workflows/ and the Python tooling
+# pins current. Bazel module and west pins move by hand: they are kept in
+# agreement by //scripts:pin_agreement_test and bumping them is a deliberate,
+# hardware-tested decision.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly

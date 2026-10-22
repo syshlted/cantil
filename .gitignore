@@ -1,0 +1,77 @@
+# Claude Code items
+AGENTS.md
+MEMORY.md
+.claude/
+.claudeignore
+
+# Internal-only documentation (not for public release)
+internal/
+
+# Python venv — never commit
+venv/
+
+# Zephyr/west build artefacts
+build/
+build_*/
+.west/
+twister-out/
+
+# Python bytecode caches
+__pycache__/
+*.pyc
+
+# nRF Connect SDK workspace (fetched by west update, ~10GB)
+# Add specific SDK dirs here if they end up inside the repo root
+bootloader/
+modules/
+nrf/
+nrfxlib/
+zephyr/
+mbedtls/
+tfm/
+
+# Editor
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+
+# Build outputs that might land in source tree
+*.bin
+*.hex
+*.elf
+*.map
+zephyr.signed.bin
+
+# AppImage build artefacts
+cantil-*.AppImage
+
+# lefthook check-compliance.py output
+/compliance.xml
+
+# Signing keys — never commit
+*.pem
+*.key
+signing_key*
+prod_signing_key*
+
+# Internal docs
+conversations/
+reference/
+storage.md
+transport-and-pairing.md
+open-questions.md
+
+# A few internal scripts I use.
+scripts/export_transcript.sh
+scripts/publish-prep.sh
+scripts/publish.sh
+
+
+# Optional CC310 crypto blobs (scripts/fetch_cc310_blob.sh) — never committed
+third_party/
+
+# Bazel convenience symlinks (Phase 3 migration; workspace at repo root)
+/bazel-*

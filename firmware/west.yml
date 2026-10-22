@@ -1,0 +1,76 @@
+# LEGACY. The default build is Bazel, which resolves its own dependencies from
+# MODULE.bazel — this manifest feeds only `scripts/build.sh --cmake` and
+# `scripts/test.sh --cmake`: the reference build and non-XIAO boards. (The
+# mcuboot tier was the third reason and the one that needed `west --sysbuild`;
+# it was dropped 2026-07-26 — docs/roadmap/wolfboot-migration.md.)
+#
+# IMPORTANT while both exist: the pins here and in MODULE.bazel must agree, or
+# the reference build stops being a reference — it would be proving a different
+# tree from the one Bazel builds. The `# PIN:` markers below are what makes
+# that checkable: //scripts:pin_agreement_test asserts they match the identical
+# markers in MODULE.bazel *and* the real pins in both files, so a one-sided
+# edit fails. MODULE.bazel additionally names littlefs/segger/hal_nordic/cmsis_6
+# SHAs that west derives from Zephyr's own manifest at that revision; those are
+# not marker-checked, since west never states them here to compare against.
+manifest:
+  version: "0.13"
+
+  remotes:
+    - name: zephyrproject
+      url-base: https://github.com/zephyrproject-rtos
+    - name: wolfssl
+      url-base: https://github.com/wolfSSL
+
+  projects:
+    # Upstream Zephyr — no sdk-nrf, no Nordic fork.
+    #
+    # Pinned to v4.4.0. Both reasons the tree was held at v4.3.1 are now gone:
+    # (1) v4.4 bumps the in-tree mbedtls to Mbed TLS 4.1, dropping the legacy
+    # `mbedtls_*` C API — moot now that the crypto stack is wolfCrypt only; and
+    # (2) transport_usb.c is off the deprecated legacy USB device stack (ported
+    # to usbd_*, hardware-validated 2026-07-24/25). This advance is the
+    # de-risking prerequisite for Phase 3 (Bazel): the v4.4.0 tag peels to
+    # commit 684c9e8f, which is exactly the commit Google's zephyr-bazel pins,
+    # so the CMake build here proves the identical tree Bazel will build.
+    # v4.4.1 exists (patch release) if a later bump is wanted; kept at .0 for
+    # the exact Bazel match. See docs/roadmap/zephyr-upstream.md.
+    #
+    # PIN: zephyr v4.4.0 684c9e8f32e4373a21098559f748f06915f950c9
+    - name: zephyr
+      remote: zephyrproject
+      revision: v4.4.0
+      import:
+        # Only the modules Cantil actually links. Adding a feature that pulls
+        # a new module (e.g. BLE -> no extra module, but Wi-Fi would) means
+        # adding it here; west errors clearly when a module is missing.
+        name-allowlist:
+          - cmsis            # Cortex-M CMSIS headers
+          - cmsis_6          # CMSIS 6 (arm arch code paths in 4.3)
+          - hal_nordic       # nrfx / MDK for nRF52840
+          - littlefs         # key + cert store
+          - picolibc         # default C library
+          - segger           # RTT log backend
+
+    # wolfSSL — WOLFSSL crypto backend (Phase 2, docs/roadmap/wolfssl-migration.md).
+    #
+    # Listed as our own project rather than pulled from the allowlist above,
+    # because wolfSSL is *not in Zephyr's manifest at all*. It is an "external
+    # module" in Zephyr's terminology
+    # (docs.zephyrproject.org/latest/develop/manifest/external/wolfssl.html),
+    # which means "known to work with Zephyr and maintained elsewhere", not
+    # "fetched by west update". Verified against v4.3.1: no wolfssl project,
+    # and modules/crypto/ contains only mbedtls.
+    #
+    # v5.9.2-stable is GPL-3.0-or-later. wolfSSL relicensed from GPLv2 at
+    # 5.8.2, and Cantil relicensed to GPL-3.0-or-later on 2026-07-22 partly
+    # to make this legal — a GPLv2-only release cannot be combined with the
+    # Apache-2.0 Zephyr it links against. Do not move this pin below 5.8.2.
+    #
+    # PIN: wolfssl v5.9.2-stable ac01707f552c611fbd135cc723b2682b3e7f80f2
+    - name: wolfssl
+      remote: wolfssl
+      revision: v5.9.2-stable
+      path: modules/crypto/wolfssl
+
+  self:
+    path: manifest

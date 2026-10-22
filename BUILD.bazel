@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Marks the repo root as a Bazel package. zephyr-bazel's zephyr_setup extension
+# derives the workspace root from //:MODULE.bazel, which requires this file to
+# exist. Intentionally empty of targets and globs — app packages live in their
+# own subdirectories (bazel_smoke/, firmware/), and apps_dirs in MODULE.bazel
+# lists them explicitly so app-discovery never scans the CMake build_*/ dirs.
+
+package(default_visibility = ["//visibility:public"])
+
+# For //scripts:pin_agreement_test, which reads this file's pins and compares
+# them against firmware/west.yml.
+exports_files(["MODULE.bazel"])

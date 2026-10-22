@@ -1,0 +1,20 @@
+/* nRF52840 Dongle overlay
+ *
+ * SW1 (side button, P1.06) is the only button on the dongle.
+ * LED1 (green, P0.06) used for status; LED2_R (P0.08) as secondary.
+ * TODO: Confirm active-high vs active-low from dongle schematic.
+ */
+
+/ {
+	cantil_tap: tap-button {
+		compatible = "cantil,tap-button";
+		gpios = <&gpio1 6 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+		debounce-ms = <20>;
+		double-tap-ms = <300>;
+	};
+
+	aliases {
+		cantil-tap = &cantil_tap;
+		cantil-led  = &led0_green;
+	};
+};

@@ -1,0 +1,20 @@
+/* nRF52840 DK overlay
+ *
+ * Uses Button 1 (SW0) for tap-sequence input and LED 1 (LED0) for status.
+ * The DK's built-in button and LED are already defined in the board DTS;
+ * this overlay adds the cantil,tap-button alias pointing at SW0.
+ */
+
+/ {
+	cantil_tap: tap-button {
+		compatible = "cantil,tap-button";
+		gpios = <&button0 0 0>;   /* SW0 — P0.11, active low, pull-up via board DTS */
+		debounce-ms = <20>;
+		double-tap-ms = <300>;
+	};
+
+	aliases {
+		cantil-tap = &cantil_tap;
+		cantil-led  = &led0;
+	};
+};

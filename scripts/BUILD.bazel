@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Build-time codegen tools for the Cantil Bazel build
+# (docs/roadmap/bazel-migration.md). Only files needed by the build graph are
+# packaged here; scripts/ is otherwise a plain shell-script directory.
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The OpenSSL gate — the independent oracle for everything the device
+# *generates*. Run as a Bazel test by //firmware/tests:ztest.bzl's
+# `openssl_gate = True`, and by scripts/test.sh on the CMake path; the two
+# runners share this one implementation so they cannot drift.
+exports_files(["openssl_gate.sh"])
+
+# Parses session_x509.toml into a packed x509_data_t C array. Stdlib only
+# (tomllib on the 3.11 toolchain). Used by //firmware:session_x509_constant.
+py_binary(
+    name = "encode_session_x509",
+    srcs = ["encode_session_x509.py"],
+    main = "encode_session_x509.py",
+)
+
+# Symbol-level security invariants on a linked image — no formatter in
+# production, a formatter in the factory image, no mbedTLS anywhere. Used by
+# the *_invariants genrules in //firmware and //firmware/factory, which fail
+# the build rather than reporting. (Not //firmware/wipe_diag: it is a bench
+# diagnostic that links neither littlefs nor a crypto library, so it has no
+# exposure to assert about.)
+#
+# A py_binary rather than an nm/grep pipeline because it runs in the exec
+# configuration over a cross-compiled artifact: pulling arm-zephyr-eabi-nm into
+# that configuration is more machinery than reading a symtab needs.
+py_binary(
+    name = "check_elf_symbols",
+    srcs = ["check_elf_symbols.py"],
+    main = "check_elf_symbols.py",
+)
+
+# firmware/west.yml and MODULE.bazel must pin the same tree, or the reference
+# build stops being a reference. Pure host text check — no platform, so it runs
+# under --config=host (scripts/test.sh does this after the sim suites).
+py_test(
+    name = "pin_agreement_test",
+    srcs = ["check_pin_agreement.py"],
+    args = [
+        "$(location //:MODULE.bazel)",
+        "$(location //firmware:west.yml)",
+    ],
+    data = [
+        "//:MODULE.bazel",
+        "//firmware:west.yml",
+    ],
+    main = "check_pin_agreement.py",
+    size = "small",
+)

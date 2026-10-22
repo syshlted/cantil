@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Commits that only reformat. `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+# (GitHub honors this file automatically).
+
+# style: apply Zephyr clang-format to firmware/ and common/
+9edbda7d9725203c9b20252f015d47a648c80b37

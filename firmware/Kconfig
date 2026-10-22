@@ -1,0 +1,534 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "Cantil"
+
+config CANTIL_INPUT_IMU
+	bool "IMU tap detection (LSM6DS3TR-C)"
+	help
+	  Use LSM6DS3TR-C hardware tap interrupts for unlock sequence input.
+
+config CANTIL_INPUT_BUTTON
+	bool "GPIO button tap detection"
+	help
+	  Use a GPIO button for unlock sequence input. Single/double-tap are
+	  distinguished in software. Debounce: 20 ms. Double-tap window: 300 ms.
+
+config CANTIL_INPUT_MIC
+	bool "PDM microphone tap detection"
+	select AUDIO
+	select AUDIO_DMIC
+	select REGULATOR
+	select REGULATOR_FIXED
+	help
+	  Use the onboard PDM microphone as a tap input.  Runs a peak-based
+	  onset detector on 16 kHz mono audio, then funnels onset events
+	  through the same single/double-tap timing logic as the GPIO button
+	  driver.  Intended for XIAO BLE Sense (msm261d3526hicpm-c on PDM).
+
+config CANTIL_MIC_BLOCK_MS
+	int "PDM mic capture block size (ms)"
+	depends on CANTIL_INPUT_MIC
+	default 100
+	range 10 100
+	help
+	  Audio block duration fed into the onset detector.  Smaller blocks
+	  reduce detection latency at the cost of more wakeups.
+
+config CANTIL_MIC_THRESHOLD
+	int "PDM mic onset peak threshold (int16)"
+	depends on CANTIL_INPUT_MIC
+	default 500
+	range 100 32767
+	help
+	  Per-block peak absolute sample value above which a tap onset is
+	  registered.  Quiet-room noise floor on the XIAO sits around 200-500;
+	  a confident tap on the shell hits several thousand.
+
+config CANTIL_MIC_REFRACTORY_MS
+	int "PDM mic onset refractory window (ms)"
+	depends on CANTIL_INPUT_MIC
+	default 80
+	range 20 500
+	help
+	  Minimum gap between consecutive onsets.  Suppresses the decay tail
+	  of a single impulse from registering as multiple taps.  Must be less
+	  than the double-tap window (300 ms).
+
+config CANTIL_TRANSPORT_USB
+	bool "USB CDC/ACM transport"
+
+config CANTIL_TRANSPORT_BLE
+	bool "BLE NUS transport"
+
+config CANTIL_STORAGE_EXTERNAL
+	bool "External QSPI flash for LittleFS"
+
+config CANTIL_STORAGE_INTERNAL
+	bool "Internal flash for LittleFS"
+
+config CANTIL_STORAGE_NO_AUTOFORMAT
+	bool "Refuse to auto-format the LittleFS partition on mount failure"
+	default n
+	help
+	  Only relevant to builds that keep CONFIG_FILE_SYSTEM_MKFS on. The
+	  production image sets it to n, which already implies everything this
+	  symbol does; the builds that still need it are the ztest suites,
+	  which format their own scratch volumes, and bring-up builds.
+
+	  Where formatting is possible, it happens whenever the mount fails, on
+	  the assumption that the failure means first boot or a corrupt
+	  filesystem. That happens at two independent layers: Zephyr's littlefs
+	  backend formats from inside fs_mount() itself unless the mount point
+	  sets FS_MOUNT_FLAG_NO_FORMAT, and storage_init() then has its own
+	  explicit fs_mkfs() fallback. This symbol closes both.
+
+	  On a provisioned device that assumption is dangerous. A partition
+	  that has been misdeclared — wrong offset, wrong size, wrong flash
+	  device — also fails to mount, and formatting then destroys the CA
+	  private key, which by design has no backup and cannot be exported.
+	  The device silently comes up looking like a factory-fresh unit.
+
+	  Set this to y to make the mount failure log and return an error
+	  instead. Nothing is written. Use it when bringing up a new board
+	  overlay or changing the flash layout, and on any build that will be
+	  flashed to a device whose keys matter.
+
+	  Closing only the fs_mkfs() layer is not enough — a build that did so
+	  was measured wiping the partition anyway via the fs_mount() path
+	  (unit #2, 2026-07-22). Verify changes here on hardware with a
+	  deliberately misdeclared partition, not by inspecting call graphs.
+
+	  Note that a genuinely blank device will not self-provision with this
+	  set; that is the intended trade-off. Creating the volume on a blank
+	  part is the step-1 factory image's job (firmware/factory/).
+
+	  This covers only the case where the mount FAILS. If a misdeclared
+	  partition happens to mount successfully over the wrong region, no
+	  format occurs and this symbol does nothing. That case is closed
+	  unconditionally instead: ca_init() never provisions, so an empty
+	  slot 0 cannot become a new CA without CMD_PROVISION_CA (0x34) —
+	  unlocked, authenticated and tap-confirmed. (This replaces the former
+	  CANTIL_NO_AUTO_PROVISION symbol, which made that behaviour optional.
+	  It was removed rather than defaulted to y: a guard against
+	  unrecoverable key loss that a board .conf can switch off is not a
+	  guard. Builds still passing -DCONFIG_CANTIL_NO_AUTO_PROVISION=y get
+	  the behaviour they asked for and an "unknown symbol" warning.)
+
+config CANTIL_VOLUME_MARKER_ADOPT
+	bool "Write an identity marker onto a volume that has none"
+	default n
+	help
+	  The volume identity marker records the partition offset and size a
+	  filesystem was created for, plus the FICR ID of the die that created
+	  it, so that a partition pointing at the wrong region is detected
+	  rather than mistaken for a blank device.
+
+	  A volume created before markers existed has none, and no amount of
+	  inspection can distinguish that from a partition pointing somewhere
+	  wrong — both simply lack the file. Writing a marker therefore cannot
+	  be automatic: doing so on a misdeclared partition would permanently
+	  bless the wrong region.
+
+	  Set this to y for a single deliberate boot to adopt an existing,
+	  known-good volume, then build without it again. Confirm first that
+	  the device's real data is present — a mounted filesystem is not
+	  sufficient evidence; check that the CA key slot reads back.
+
+	  Leave n for production and for any bring-up of a new flash layout.
+
+config CANTIL_MAX_KEY_SLOTS
+	int "Maximum number of key slots"
+	default 8
+	range 1 64
+
+config CANTIL_MAX_CLIENT_BONDS
+	int "Maximum number of host-client bonds"
+	default 4
+	range 1 16
+	help
+	  Maximum number of bonded host-client static public keys stored in
+	  /clients/. Enforced at bond-creation time; existing bonds are not
+	  evicted when this value is reduced.
+
+config CANTIL_MAX_PEER_BONDS
+	int "Maximum number of peer-device bonds"
+	default 4
+	range 1 8
+	help
+	  Maximum number of bonded peer-device static public keys stored in
+	  /clients/. Enforced at bond-creation time; enforced independently
+	  of CANTIL_MAX_CLIENT_BONDS.
+
+choice CANTIL_PAIRING_METHOD
+	prompt "Device-side pairing method"
+	default PAIRING_TAP_CONFIRM
+	help
+	  Selects how the device handles new (unknown) client static keys at
+	  handshake time.  Method 2 (tap-confirmed bond) is the release default.
+	  PROMISCUOUS is for development only.
+
+config PAIRING_PROMISCUOUS
+	bool "Method 0 — Promiscuous (any client accepted, no bond stored)"
+	depends on !CANTIL_SESSION_X509_STRICT
+	help
+	  Any client is accepted unconditionally.  No bond is stored and no
+	  authentication is performed beyond the Noise_XX handshake itself.
+	  Disallowed in release builds (CANTIL_SESSION_X509_STRICT=y prevents
+	  this option from being selected).
+
+config PAIRING_TOFU
+	bool "Method 1 — Silent TOFU (auto-bond first N clients, reject the rest)"
+
+config PAIRING_TAP_CONFIRM
+	bool "Method 2 — Tap-confirmed bond (AWAITING_PAIR prompt, Orange-Orange to accept)"
+
+config PAIRING_PASSKEY
+	bool "Method 3 — Passkey + tap-confirmed bond (6-digit LED blink, client echoes digits, PSK derived and stored)"
+
+config PAIRING_CA_ANCHOR
+	bool "Method 4 — CA-anchored client cert (client sends cert chain on msg3, validated against on-device trust anchor; no per-client bond)"
+
+config PAIRING_CA_ANCHOR_PLUS_PASSKEY
+	bool "Method 5 — CA-anchored + passkey (Method 4 cert validation + Method 3 passkey; bonds with per-client PSK)"
+
+endchoice
+
+config CANTIL_CA_ANCHOR_SLOT
+	int "CA slot to use as trust anchor for Method 4/5 pairing"
+	default 0
+	range 0 63
+	depends on PAIRING_CA_ANCHOR || PAIRING_CA_ANCHOR_PLUS_PASSKEY
+	help
+	  Index of the key slot whose stored cert.der is used as the trust anchor
+	  when PAIRING_CA_ANCHOR or PAIRING_CA_ANCHOR_PLUS_PASSKEY is selected.
+	  Client cert chains must validate to this CA.  Slot 0 (the device's
+	  primary CA) is the default.
+
+config CANTIL_PAIR_TIMEOUT_SEC
+	int "Pairing prompt timeout (seconds)"
+	default 30
+	range 10 300
+	help
+	  How long the device waits in AWAITING_PAIR for the user to tap the
+	  pairing trigger (Orange Orange) before rejecting the new client.
+	  Only relevant when PAIRING_TAP_CONFIRM or PAIRING_PASSKEY is selected.
+
+config CANTIL_PASSKEY_TIMEOUT_SEC
+	int "Passkey entry timeout (seconds)"
+	default 60
+	range 10 300
+	depends on PAIRING_PASSKEY || PAIRING_CA_ANCHOR_PLUS_PASSKEY
+	help
+	  How long the device waits for the client to send PAIRING_PASSKEY_REPLY
+	  after blinking the passkey.  The 10-second transport recv timeout applies
+	  per attempt; this value controls how many retries are allowed.
+	  Only relevant when PAIRING_PASSKEY or PAIRING_CA_ANCHOR_PLUS_PASSKEY is
+	  selected.
+
+config CANTIL_PASSKEY_BLINK_PAUSE_MS
+	int "Inter-digit pause during passkey LED blink (milliseconds)"
+	default 1000
+	range 0 5000
+	depends on PAIRING_PASSKEY || PAIRING_CA_ANCHOR_PLUS_PASSKEY
+	help
+	  Sleep between passkey digit groups while blinking.  Set to 0 in test
+	  builds to avoid real-time delays on native_sim.
+
+config CANTIL_CRL_VALIDITY_SEC
+	int "CRL nextUpdate window (seconds)"
+	default 86400
+	range 60 31536000
+	help
+	  When a host fetches a CRL via GET_CRL, the returned RFC 5280 v2
+	  CertificateList carries thisUpdate = now_unix and nextUpdate =
+	  thisUpdate + this value. Default is 24h; verifiers should re-fetch
+	  before nextUpdate expires.
+
+config CANTIL_REVOKE_REQUIRE_NOW_UNIX
+	bool "Require host-supplied revocation timestamp on REVOKE_CERT"
+	default n
+	help
+	  When set, the REVOKE_CERT (0x13) opcode rejects requests that do
+	  not carry a trailing 8-byte BE uint64 revocation-date timestamp.
+	  Default (n): timestamp is optional; missing timestamp records
+	  revoked_at_unix=0 and the DER CRL encoder substitutes thisUpdate
+	  at fetch time. Set y for deployments where every revocation must
+	  carry a true wall-clock date.
+
+config CANTIL_INACTIVITY_TIMEOUT_SEC
+	int "Auto-lock inactivity timeout (seconds)"
+	default 300
+	range 30 3600
+
+choice CANTIL_ALPHABET
+	prompt "Tap gesture alphabet"
+	default CANTIL_ALPHABET_COUNT_COLOR
+	help
+	  Selects the input alphabet the gesture parser uses to translate raw
+	  taps into unlock/trigger sequences. The choice is build-time only;
+	  changing it invalidates any previously persisted unlock sequence.
+
+config CANTIL_ALPHABET_COUNT_COLOR
+	bool "Count-then-pause = color (default, doc-true)"
+	help
+	  Each digit is N taps in quick succession (N = 1..palette_size).
+	  A CANTIL_DIGIT_TIMEOUT_MS silence closes the digit (DIGIT_ACK
+	  fires); another silence-window closes the whole sequence and
+	  triggers evaluation. With the default 6-color palette, a 4-digit
+	  unlock has 6^4 = 1296 combinations.
+
+config CANTIL_ALPHABET_STDT_BINARY
+	bool "ST/DT binary triplets -> color"
+	help
+	  Three ST/DT taps form a binary triplet (ST=0, DT=1) that maps to
+	  one color digit. 1-1-1 is reserved as invalid and fires SEQ_ERROR
+	  at sequence-close. 7 valid colors per digit; a 4-digit unlock has
+	  7^4 = 2401 combinations.
+
+config CANTIL_ALPHABET_STDT_PLAIN
+	bool "ST/DT plain (LEAST SECURE - requires I_UNDERSTAND gate)"
+	help
+	  Raw ST/DT taps, one bit per tap. Very low entropy. Kept as a
+	  developer escape hatch for early bring-up only. Selecting this
+	  alphabet halts the build with FATAL_ERROR unless
+	  CANTIL_ALPHABET_STDT_PLAIN_I_UNDERSTAND is also set.
+
+endchoice
+
+config CANTIL_ALPHABET_STDT_PLAIN_I_UNDERSTAND
+	bool "Confirm: I understand STDT_PLAIN is least secure"
+	depends on CANTIL_ALPHABET_STDT_PLAIN
+	help
+	  Acknowledgment that STDT_PLAIN gives only 1 bit of entropy per
+	  tap. Without this flag, selecting CANTIL_ALPHABET_STDT_PLAIN
+	  aborts the CMake configure step.
+
+config CANTIL_UNLOCK_PALETTE_SIZE
+	int "Color-palette size for COUNT_COLOR alphabet"
+	depends on CANTIL_ALPHABET_COUNT_COLOR
+	default 6
+	range 2 9
+	help
+	  Number of colors in the COUNT_COLOR palette. Each digit must be
+	  1..palette_size taps. Larger palette gives more entropy per
+	  digit but requires the user to count higher.
+
+config CANTIL_DIGIT_TIMEOUT_MS
+	int "Tap digit-close timeout (milliseconds)"
+	depends on CANTIL_ALPHABET_COUNT_COLOR
+	default 1500
+	range 300 5000
+	help
+	  Silence window after the last tap that closes the current digit
+	  in the COUNT_COLOR alphabet. A second silence window of the same
+	  length closes the whole sequence and triggers evaluation
+	  (see CANTIL_SEQ_TIMEOUT_MS).
+
+config CANTIL_SEQ_TIMEOUT_MS
+	int "Tap sequence completion timeout (milliseconds)"
+	default 1500
+	range 500 5000
+	help
+	  For STDT_PLAIN / STDT_BINARY: silence since the last tap that
+	  closes the whole sequence.
+	  For COUNT_COLOR: silence *after* a digit-close that closes the
+	  sequence, so the total silence-to-evaluation is
+	  CANTIL_DIGIT_TIMEOUT_MS + CANTIL_SEQ_TIMEOUT_MS (defaults: 3 s).
+
+config CANTIL_CONFIRM_TIMEOUT_SEC
+	int "Protect/unprotect confirm-gesture timeout (seconds)"
+	default 10
+	range 3 60
+	help
+	  Time to enter the confirm gesture (DT DT DT) after the host issues
+	  PROTECT_SLOT or UNPROTECT_SLOT. On expiry the device returns to
+	  UNLOCKED and the command fails.
+
+config CANTIL_RESET_TIMEOUT_SEC
+	int "Reset-confirm timeout (seconds)"
+	default 30
+	range 5 120
+	help
+	  Time to re-enter the current unlock sequence after the host issues
+	  RESET_DEVICE. Longer than the protect timeout because reset is
+	  irreversible and the user may need to consult their backup.
+
+config CANTIL_UNLOCK_RATE_LIMIT_THRESHOLD
+	int "Failed unlock attempts before lockouts begin"
+	default 3
+	range 0 16
+	help
+	  Number of consecutive failed unlock attempts that play only a FAIL
+	  blink. The next failure (and each one after it) enters a growing
+	  lockout window: 10 s, 30 s, 2 min, 10 min, 1 h (capped). During a
+	  lockout, taps are dropped with BUSY_REJECT. The counter is persisted
+	  to LittleFS and clears to zero on a successful unlock — so a power
+	  cycle does NOT reset the ramp. Setting this to 0 makes the very
+	  first failure trigger a lockout.
+
+config CANTIL_RESET_REQUIRES_UNLOCK
+	bool "Require unlock before RESET_DEVICE"
+	default n
+	help
+	  When enabled, RESET_DEVICE (0x32) is only accepted while UNLOCKED
+	  and the confirm gesture is the user's current unlock sequence. When
+	  disabled (default), RESET_DEVICE is accepted from LOCKED and uses
+	  a fixed awkward confirm pattern. Default off so a forgotten
+	  passphrase does not brick the device.
+
+config CANTIL_GESTURE_REHEARSAL
+	bool "Gesture / LED rehearsal mode"
+	help
+	  Adds two extra tap sequences while UNLOCKED that simulate host-issued
+	  PROTECT_SLOT (DT DT DT DT) and RESET_DEVICE (ST ST ST ST), letting you
+	  exercise AWAITING_CONFIRM and AWAITING_RESET on-device without a
+	  working host connection. Intended for visually validating LED patterns
+	  against real tap input. Do not enable in production builds.
+
+
+config CANTIL_DIAG_BOOT
+	bool "POST_KERNEL diagnostic LED blinks"
+	help
+	  Adds two SYS_INIT entries (POST_KERNEL priority 0 and 99) that blink
+	  the LED to narrow down boot crashes without serial output.
+
+config CANTIL_PDM_SMOKETEST
+	bool "PDM microphone smoke-test build"
+	help
+	  Diagnostic build that replaces the production firmware with a minimal
+	  DMIC capture loop. Streams peak/RMS per 100 ms block over USB CDC and
+	  drives the RGB LED as a level meter. Intended for A/B verifying the
+	  onboard MEMS mic across two hardware units. Disables BLE, Noise, PSA
+	  crypto, LittleFS, and the gesture state machine — only the audio path
+	  and CDC console are built.
+
+if !CANTIL_PDM_SMOKETEST
+
+# CANTIL_CRYPTO_BACKEND_ACCELERATED (Oberon ocrypto + the CC3XX PSA driver via
+# NCS's nrf_security) was removed on 2026-07-23, and the FREE backend (Zephyr
+# in-tree mbedTLS) on 2026-07-24 — the last step of
+# docs/roadmap/wolfssl-migration.md. wolfCrypt is now the only crypto backend,
+# so this is a plain always-on symbol rather than a choice. History is in git.
+
+config CANTIL_CRYPTO_BACKEND_WOLFSSL
+	bool
+	default y
+	# WOLFSSL_BUILTIN is not selected here: it is the default member of the
+	# wolfssl module's own WOLFSSL_IMPLEMENTATION choice, where select has no
+	# effect. The alternative (WOLFSSL_LIBRARY, linking a prebuilt host
+	# library) is not meaningful for a firmware image.
+	select WOLFSSL
+	help
+	  wolfCrypt backs both CA operations (ECDSA P-256, AES-256-GCM,
+	  HKDF-SHA256) and the Noise_XX session primitives (Curve25519,
+	  ChaCha20-Poly1305, SHA-256). TRNG comes from the Zephyr entropy device
+	  (CC310 hardware) regardless. GPL-3.0-or-later, which is why Cantil
+	  relicensed on 2026-07-22 — wolfSSL 5.8.2+ cannot combine with an
+	  Apache-2.0 work.
+
+	  The build is WOLFCRYPT_ONLY (no TLS layer, which Cantil never used) and
+	  is configured entirely from firmware/include/cantil_wolfssl_user_settings.h.
+	  It brings Cortex-M assembly for the P-256 path and — the reason the
+	  migration happened — ML-KEM and ML-DSA in the same library.
+
+	  Correctness gate: firmware/tests/{crypto_kat,noise_crypto} run fixed
+	  vectors from published standards, and the *_der / sign_csr / session_slot
+	  suites hand generated certificates to scripts/openssl_gate.sh, so a pass
+	  means wolfCrypt agrees with a third implementation rather than itself.
+
+# The wolfSSL Zephyr module reads its configuration from one header rather
+# than from Kconfig, and defaults to a general-purpose TLS client build.  This
+# points it at ours instead; see firmware/include/ for what it turns off and
+# why.  Set here rather than in prj.conf because it is not a preference — the
+# backend does not build without it.
+config WOLFSSL_SETTINGS_FILE
+	default "cantil_wolfssl_user_settings.h" if CANTIL_CRYPTO_BACKEND_WOLFSSL
+
+endif # !CANTIL_PDM_SMOKETEST
+
+config CANTIL_SESSION_X509_TOML
+	string "Session X.509 identity constant (TOML source path)"
+	default "session_x509.toml"
+	help
+	  Path (relative to the firmware/ source directory) of the TOML file
+	  that supplies the subject-side X.509 fields for the session-slot
+	  certificate. A CMake step runs scripts/encode_session_x509.py over it
+	  and links the packed x509_data_t blob into the firmware as
+	  cantil_session_x509_constant[]. The build fails if the file is
+	  missing, malformed, or sets a disallowed key-usage bit. See
+	  docs/transport-and-pairing.md (task T-01).
+
+config CANTIL_SESSION_X509_STRICT
+	bool "Strict session identity check (reject on cert/constant mismatch)"
+	default n
+	help
+	  At boot, session_slot_init() compares the stored session cert's
+	  subject-side fields (O, OU, C, ST, L, validity, key_usage) against the
+	  build-time constant (cantil_session_x509_constant[]). CN, issuer, and
+	  signature are ignored (per-device / CA-signing changes are legitimate).
+
+	  When set (y, the release default), a mismatch puts the device into
+	  recovery mode: the LED shows LED_PATTERN_IDENTITY_MISMATCH and the
+	  protocol dispatcher rejects every opcode except DEVICE_STATUS and
+	  RESET_DEVICE (and, once implemented, UPDATE_FIRMWARE /
+	  ACCEPT_IDENTITY_MIGRATION) so a corrected firmware can recover.
+
+	  When unset (n, the development default), a mismatch only logs a warning
+	  and the device boots normally. See docs/transport-and-pairing.md (T-03).
+
+config CANTIL_TEST_INJECT_NOISE_KEYS
+	bool "Test-only: inject Noise static + ephemeral keypairs"
+	help
+	  When set, session_open() consults the symbols declared in
+	  session/test_inject.h instead of generating a fresh ephemeral
+	  keypair (noise_crypto_dh_keygen) or loading the persisted static
+	  keypair (storage_noise_keypair_read).  The test build provides
+	  strong definitions of those symbols that return precomputed values
+	  from a Noise_XX known-answer vector, making the responder's wire
+	  output bit-deterministic so it can be compared to a reference
+	  trace.  Do not enable in production builds — it removes all key
+	  freshness and bypasses persistent storage entirely.
+
+# ── Bootloader tier ─────────────────────────────────────────────────────────
+
+choice CANTIL_BOOTLOADER
+	prompt "Bootloader tier"
+	default CANTIL_BOOTLOADER_UF2_ONLY
+	help
+	  Selects the bootloader configuration and flash layout for the target
+	  board.  Each tier has a different security / convenience tradeoff.
+
+	  A choice with one member, for now.  The MCUBOOT tier was dropped on
+	  2026-07-26 (docs/roadmap/wolfboot-migration.md); wolfBoot's tier will
+	  be the second member.  Kept as a choice rather than collapsed to a
+	  bool precisely so that adding it back is a local change — and so the
+	  board .conf files that already say CONFIG_CANTIL_BOOTLOADER_UF2_ONLY=y
+	  keep meaning what they say.
+
+config CANTIL_BOOTLOADER_UF2_ONLY
+	bool "UF2 only (development default)"
+	help
+	  Adafruit UF2 bootloader only.  Writes .uf2 files directly to the app
+	  partition — no signature validation, no rollback, no A/B slots.
+	  Double-tap reset to enter UF2 mode.  Fastest iteration; appropriate
+	  for dev builds on the XIAO BLE Sense.
+
+	  Flash layout (XIAO):
+	    0x000000  MBR              4 KB
+	    0x001000  App            972 KB
+	    0x0F4000  UF2 bootloader  48 KB
+
+endchoice
+
+# ── Firmware update ─────────────────────────────────────────────────────────
+# Nothing here yet, deliberately. CANTIL_FW_SIGNING_KEY_PATH /
+# CANTIL_FW_IMAGE_VERSION / CANTIL_FW_SLOT_SIZE drove imgtool, which emits
+# MCUboot image headers, and CANTIL_FW_CHUNK_MAX /
+# CANTIL_FW_INVALID_CONFIRM_TIMEOUT_SEC / CANTIL_FW_UPDATE_WIPE_ON_INVALID were
+# the MCUboot secondary-slot mechanics. All six went with the tier on
+# 2026-07-26. CMD_UPDATE_FIRMWARE (0x33) is unaffected: on the uf2_only tier it
+# never streamed an image anyway — it reboots into the UF2 bootloader, which is
+# still exactly what protocol.c does. What went away is the streaming half.
+# See docs/roadmap/wolfboot-migration.md.
+
+source "Kconfig.zephyr"

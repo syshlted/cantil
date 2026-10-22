@@ -1,0 +1,24 @@
+description: GPIO button for cantil tap-sequence input
+
+compatible: "cantil,tap-button"
+
+include: base.yaml
+
+properties:
+  gpios:
+    type: phandle-array
+    required: true
+    description: GPIO specifier for the tap button.
+
+  debounce-ms:
+    type: int
+    default: 20
+    description: Debounce window in milliseconds.
+
+  double-tap-ms:
+    type: int
+    default: 300
+    description: |
+      Maximum interval between button releases that counts as a double-tap.
+      Matches the LSM6DS3TR-C QUIET+DUR default so sequences feel identical
+      regardless of input source.

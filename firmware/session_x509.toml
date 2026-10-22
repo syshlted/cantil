@@ -1,0 +1,36 @@
+# Session X.509 identity constant (transport + pairing, task T-01).
+#
+# This file is the build-time source of truth for the subject-side X.509
+# fields of the device's *session slot* certificate — the cert that packages
+# the device's Noise static key as an identity credential (see
+# docs/transport-and-pairing.md "Session slot").
+#
+# A CMake step runs scripts/encode_session_x509.py over this file and emits a
+# packed x509_data_t blob (the same wire format PUSH_KEY_X509 accepts, parsed
+# by x509_parse() in firmware/src/ca/ca.c) linked into the firmware as
+# `cantil_session_x509_constant[]`. The build FAILS if this file is missing,
+# malformed, or sets a disallowed key-usage bit.
+#
+# The CN here is a placeholder: session_init() overrides it at first boot with
+# the FICR-derived per-device serial ("Cantil-<hex16>"). Every other field is
+# used verbatim and is what the strict-mode boot check (T-03) compares against.
+
+[subject]
+cn = "Cantil"                 # OVERRIDDEN at init with the FICR-derived device serial
+o  = "My Organization"
+ou = "Hardware CA — Transport"
+c  = "CA"                     # 2-letter country code, or empty
+st = ""
+l  = ""
+
+[validity]
+days = 3650                   # 10 years
+
+[key_usage]
+# The session key is a transport identity: it signs the handshake transcript
+# (digitalSignature) and performs ECDH (keyAgreement). It is never a CA.
+digital_signature = true
+key_agreement     = true
+# All others MUST be false. Setting either of these true fails the build.
+key_cert_sign     = false
+crl_sign          = false

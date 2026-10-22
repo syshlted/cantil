@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Picked up automatically by `gitleaks` in lefthook and CI.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Saved SSA web page used as name-list source data; its inline BOOMR_API_key is the site's public analytics key, not ours."
+paths = ['''contrib/www\.ssa\.gov - Top Baby Names for 2025\.html''']

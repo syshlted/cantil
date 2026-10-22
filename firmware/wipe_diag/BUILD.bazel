@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sparse secure-wipe diagnostic image. Erases + zeroes the external QSPI part
+# block by block and records per-block results (and error codes) to a fixed
+# region of internal flash, retrievable via the UF2 bootloader's CURRENT.UF2 —
+# so the diagnostic does not depend on USB enumeration, which is exactly what
+# is unreliable on a unit under test. Decode with scripts/decode_wipe_log.py.
+#
+#   bazelisk build //firmware/wipe_diag:cantil_wipe_diag --config=xiao
+#
+# A BUILD file here is not optional even for a one-source app: Bazel
+# app-discovery does a recursive `find <apps_dir> -name prj.conf`, so without
+# its own package this app's prj.conf resolves to //firmware and collides with
+# the production image on the same app id.
+
+load("@zephyr//:cc.bzl", "zephyr_app", "zephyr_cc_library")
+load("//firmware:uf2.bzl", "UF2_FAMILY_NRF52840")
+
+package(default_visibility = ["//visibility:public"])
+
+zephyr_cc_library(
+    name = "wipe_diag_lib",
+    srcs = ["src/main.c"],
+    copts = [
+        "-Wno-error",
+        "-Wno-unused-parameter",
+    ],
+    # RTT only, for a live view when an SWD probe happens to be attached; the
+    # authoritative log goes to internal flash.
+    deps = ["//firmware:segger"],
+)
+
+# uf2_family also emits cantil_wipe_diag.uf2 — and the UF2 bootloader is how
+# the log comes back off the device too (CURRENT.UF2).
+zephyr_app(
+    name = "cantil_wipe_diag",
+    uf2_family = UF2_FAMILY_NRF52840,
+    deps = [":wipe_diag_lib"],
+)

@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Scanners. Findings upload to the Security tab as SARIF where the tool can
+# produce it. Runs on PRs and pushes to master, and weekly so a newly
+# published CVE or rule hits a quiet repo too.
+#
+# Blocking here: semgrep (project rules + p/c), gitleaks, osv-scanner.
+# CodeQL reports to the Security tab and is not a required check.
+
+name: security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # .semgrep/ holds the project rules (secret zeroization, constant-time
+  # compares, CSPRNG-only, no unbounded string functions); p/c is the
+  # registry's general C ruleset. Zephyr macros make the C parser emit
+  # "partial parsing" warnings; those are expected and do not fail the job.
+  semgrep:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - run: pip install "semgrep==1.182.0"
+      - name: semgrep
+        run: >
+          semgrep --metrics=off --error
+          --config .semgrep --config p/c
+          --sarif --output semgrep.sarif
+          firmware common libcantil scripts
+      - uses: github/codeql-action/upload-sarif@4bfa242aa49c5f7c6770b98670d354a7dfac05f8 # v3.39.1
+        if: always() && hashFiles('semgrep.sarif') != ''
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  gitleaks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+      - name: Scan full history (.gitleaks.toml carries the allowlist)
+        run: |
+          # go.mod still declares the pre-move module path
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          "$(go env GOPATH)/bin/gitleaks" detect --redact --no-banner
+
+  osv-scanner:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+      - name: Scan lockfiles and pinned deps
+        run: |
+          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.6.0
+          "$(go env GOPATH)/bin/osv-scanner" scan source .
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+
+  # c-cpp needs a traced build. Bazel's sandbox hides the compiler from the
+  # tracer, so build locally and bypass every cache. The target is the sim
+  # ztest suites plus the host client: the cross-compiled firmware shares its
+  # sources with the sim build, which is what makes tracing it unnecessary.
+  codeql:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: github/codeql-action/init@4bfa242aa49c5f7c6770b98670d354a7dfac05f8 # v3.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - name: Build (traced)
+        if: matrix.build-mode == 'manual'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libssl-dev libsodium-dev
+          flags=(
+            --spawn_strategy=local --nouse_action_cache
+            --noremote_accept_cached --noremote_upload_local_results
+            --disk_cache=
+          )
+          bazelisk build "${flags[@]}" //firmware/tests/... --config=sim
+          bazelisk build "${flags[@]}" //libcantil/... --config=host
+          bazelisk shutdown
+      - uses: github/codeql-action/analyze@4bfa242aa49c5f7c6770b98670d354a7dfac05f8 # v3.39.1
+        with:
+          category: /language:${{ matrix.language }}

@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "Cantil factory image"
+
+# Mirror of firmware/Kconfig:CANTIL_STORAGE_EXTERNAL. Defined locally so this
+# app builds standalone against Kconfig.zephyr without pulling in the full
+# firmware Kconfig tree (USB/BLE/IMU/gesture/CA). storage_partition.h keys off
+# CONFIG_CANTIL_STORAGE_EXTERNAL to choose between the cantil_storage node on
+# external QSPI and the board's own storage_partition — keep the symbol name
+# and semantics in sync with the production definition.
+config CANTIL_STORAGE_EXTERNAL
+	bool "LittleFS lives on the external QSPI part (cantil_storage node)"
+	default n
+
+config CANTIL_FACTORY_FORCE
+	bool "Format a volume that already holds data"
+	default n
+	help
+	  By default the factory image refuses to format anything except a
+	  partition that will not mount — the only state that is good evidence
+	  of a blank device.
+
+	  In particular it refuses when the volume mounts but carries no marker.
+	  That state is ambiguous: it is what a factory-fresh volume looks like,
+	  and equally what a fully provisioned pre-marker device looks like.
+	  Both units in development are in exactly that state. Formatting on
+	  that evidence would destroy an unexportable CA key.
+
+	  It also refuses when a valid marker is present (the device is already
+	  initialised — reformatting would discard live keys) and when the
+	  marker mismatches (wrong partition or another die's volume, where
+	  formatting is the worst available response).
+
+	  Set this to y only to deliberately re-initialise a device whose
+	  contents you are willing to lose. It is not needed for a genuinely
+	  new device.
+
+source "Kconfig.zephyr"

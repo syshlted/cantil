@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Host-side test material. The fixtures serve two consumers: //firmware/tests/
+# certparse compiles against them so both sides of the wire are checked against
+# the same certificates, and test_x509 below checks the client's X.509 seam.
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "fixtures",
+    testonly = True,
+    hdrs = ["fixtures.h"],
+    includes = ["."],
+)
+
+# Conformance tests for the src/x509.h seam. Every backend is asked the same
+# questions and must give the same answers; the expectations are golden values
+# derived independently with the openssl CLI (gen_fixtures.sh), not
+# backend-vs-backend comparisons — two backends agreeing on the wrong answer is
+# a real outcome. See the header of test_x509.c.
+#
+#   bazelisk test //libcantil/tests:test_x509
+#   bazelisk test //libcantil/tests:test_x509 --//libcantil:x509_backend=wolfssl
+cc_test(
+    name = "test_x509",
+    srcs = ["test_x509.c"] + ["//libcantil:x509_backend_src"],
+    copts = [
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+    ],
+    deps = [
+        ":fixtures",
+        "//libcantil:libx509",
+        "//libcantil:x509_headers",
+    ],
+)

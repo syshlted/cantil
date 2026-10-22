@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Local git-hook checks. Install once per clone: `lefthook install`
+# (needs lefthook on PATH — see AGENTS.md for what each job needs).
+#
+# pre-commit: fast, staged-files-only checks. Check-only, nothing here
+#             auto-fixes and re-stages — a failing job tells you the command
+#             to run yourself.
+# pre-push:   heavier, repo-wide checks (build+test, dependency/compliance
+#             scans) that gate what actually leaves this machine.
+#
+# Tools other than the build/test scripts themselves are expected on PATH by
+# bare name (clang-format, shellcheck, cppcheck, ruff, buildifier, gitleaks,
+# reuse, osv-scanner) — how you provide them is up to you; this dev's own
+# setup wraps several as `~/bin/<tool>` scripts that shell out to podman
+# (see docker/*.Dockerfile for the two with no usable published image).
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: no conflict markers
+      run: scripts/lefthook/check-conflict-markers.sh
+
+    - name: no large files
+      run: scripts/lefthook/check-large-files.sh
+
+    - name: no secret-shaped filenames
+      run: scripts/lefthook/check-secret-filenames.sh
+
+    - name: no trailing whitespace
+      run: git diff --cached --check
+
+    - name: clang-format version
+      run: scripts/lefthook/check-clang-format-version.sh
+
+    - name: clang-format
+      glob: "*.{c,h}"
+      run: clang-format --dry-run --Werror {staged_files}
+
+    # Bug classes only (warning/performance/portability). The `style` class
+    # is mostly noise here: it flags `ret` declared by Zephyr macros as
+    # unused and wants const on every callback parameter. nullPointer in
+    # tests is ztest's ASSERT_NOT_NULL, which cppcheck can't see through.
+    # normalCheckLevelMaxBranches is an info note on big functions that
+    # still counts toward --error-exitcode.
+    - name: cppcheck
+      glob: "*.c"
+      run: >
+        cppcheck --error-exitcode=1 --quiet
+        --enable=warning,performance,portability
+        --suppress=missingIncludeSystem
+        --suppress=normalCheckLevelMaxBranches
+        --suppress=nullPointer:*/tests/* {staged_files}
+
+    - name: shellcheck
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+
+    - name: ruff
+      glob: "*.py"
+      run: ruff check {staged_files}
+
+    - name: buildifier
+      glob: "{*.bzl,BUILD,BUILD.bazel,MODULE.bazel,WORKSPACE}"
+      run: buildifier -mode=check -lint=warn {staged_files}
+
+    - name: gitleaks
+      run: gitleaks protect --staged --redact
+
+pre-push:
+  parallel: false
+  jobs:
+    - name: reuse lint
+      run: reuse lint
+
+    - name: osv-scanner
+      run: osv-scanner scan source .
+
+    # Non-blocking until the 27 CVEs it reports in transitive deps
+    # (cryptography/ecdsa/pip/protobuf, pulled in by nrfutil/west, not pinned
+    # directly by us) are triaged. Drop the `|| true` once fixed.
+    - name: pip-audit
+      run: venv/bin/pip-audit || true
+
+    - name: check_compliance
+      run: scripts/lefthook/run-check-compliance.sh
+
+    - name: build
+      run: sh scripts/build.sh
+
+    - name: test
+      run: sh scripts/test.sh

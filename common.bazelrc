@@ -1,0 +1,125 @@
+# Copyright 2026 The Pigweed Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not
+# use this file except in compliance with the License. You may obtain a copy of
+# the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations under
+# the License.
+
+# ===========================================================================
+# This is a common .bazelrc fragment meant to be included from the .bazelrc
+# files in submodules in subdirectories like examples/ and bazel/
+#
+# It is based on the Pigweed's pigweed.bazelrc, meant to be used by projects
+# that use Pigweed:
+# https://cs.opensource.google/pigweed/pigweed/+/main:pw_build/pigweed.bazelrc
+#
+# It assumes those have a dependency on Pigweed, and includes some settings
+# under that assumption.
+# ===========================================================================
+
+# Standard Pigweed flags
+# ======================
+# All Pigweed projects are expected to set these flags. They mostly pre-adopt
+# future Bazel settings.
+#
+# The source of truth for these flags is pw_build/pigweed.bazelrc in the main
+# Pigweed repo.
+#
+# Do not attempt to configure an autodetected (local) toolchain. We vendor all
+# our toolchains, and CI VMs may not have any local toolchain to detect.
+common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+
+# Required for new toolchain resolution API.
+build --incompatible_enable_cc_toolchain_resolution
+
+# Expose exec toolchains for Python. We use these toolchains in some rule
+# implementations (git grep for
+# "@rules_python//python:exec_tools_toolchain_type").
+build --@rules_python//python/config_settings:exec_tools_toolchain=enabled
+
+# Don't propagate flags or defines to the exec config. This will become the
+# default one day (https://github.com/bazelbuild/bazel/issues/22457) and will
+# improve cache hit rates between builds targeting different platforms. This is
+# especially impactful for large host tools like protoc, which will have its
+# cache invalidated when your host C++ config changes.
+common --experimental_exclude_defines_from_exec_config
+common --experimental_exclude_starlark_flags_from_exec_config
+
+# Don't automatically create __init__.py files.
+#
+# This prevents spurious package name collisions at import time, and should be
+# the default (https://github.com/bazelbuild/bazel/issues/7386). It's
+# particularly helpful for Pigweed, because we have many potential package name
+# collisions due to a profusion of stuttering paths like
+# pw_transfer/py/pw_transfer.
+common --incompatible_default_to_explicit_init_py
+
+# Don't inherit system PATH. Improves hermeticity and cache hit rates. Should
+# be true by default one day (https://github.com/bazelbuild/bazel/issues/7026).
+common --incompatible_strict_action_env
+
+# C++ toolchain configuration
+# ===========================
+
+# Ignore all warnings in third-party code.
+common --per_file_copt=external/.*@-w
+common --host_per_file_copt=external/.*@-w
+
+# Picotool needs to build with exceptions and RTTI enabled.
+common --per_file_copt=external.*picotool.*@-fexceptions,-frtti
+common --host_per_file_copt=external.*picotool.*@-fexceptions,-frtti
+
+# Keep debugging symbols, but don't send them when flashing.
+build --strip=never
+
+# Sanitizer configs
+# =================
+common:asan --@pigweed//pw_toolchain/host_clang:asan
+common:tsan --@pigweed//pw_toolchain/host_clang:tsan
+common:ubsan --@pigweed//pw_toolchain/host_clang:ubsan
+
+# UX settings
+# ===========
+# Error output settings.
+common --verbose_failures
+test --test_output=errors
+
+# Suppress the DEBUG: log messages from bazel. We get spammy DEBUG:
+# messages from rules_python.
+#
+# TODO: https://github.com/bazelbuild/rules_python/issues/1818 - Re-enable DEBUG
+# messages once rules_python stops spamming us.
+common --ui_event_filters=-debug
+
+# Remote cache
+# ============
+# Use the remote cache. This will only work for users who have permission to
+# access it (including the CI system!).
+common:remote_cache --bes_backend="buildeventservice.googleapis.com"
+common:remote_cache --bes_instance_name=pigweed-rbe-open
+common:remote_cache --bes_results_url="https://source.cloud.google.com/results/invocations/"
+common:remote_cache --bes_timeout=600s
+common:remote_cache --experimental_remote_cache_eviction_retries=5
+common:remote_cache --google_default_credentials=true
+# Required to use buildeventservice on Bazel 8+.
+# TODO: b/345556899 -- Remove this flag when no longer required.
+common:remote_cache --legacy_important_outputs
+common:remote_cache --remote_cache=grpcs://remotebuildexecution.googleapis.com
+common:remote_cache --remote_instance_name=projects/pigweed-rbe-open/instances/default-instance
+common:remote_cache --remote_upload_local_results=false
+
+# RP2040 platform configuration
+build:rp2040 --platforms=//targets/rp2:rp2040
+test:rp2040 --run_under=@pigweed//targets/rp2040/py:unit_test_client
+
+# RP2350 is the same as rp2040 but with a different --platforms setting.
+build:rp2350 --config=rp2040
+build:rp2350 --platforms=//targets/rp2:rp2350
+

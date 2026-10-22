@@ -1,0 +1,26 @@
+/* Generic nRF52840 overlay — minimal: USB + GPIO button + single LED
+ *
+ * Replace the GPIO specifiers below with the actual pins for your board.
+ * See the cantil,tap-button binding in dts/bindings/ for property definitions.
+ */
+
+/ {
+	cantil_tap: tap-button {
+		compatible = "cantil,tap-button";
+		gpios = <&gpio0 11 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>; /* TODO: set pin */
+		debounce-ms = <20>;
+		double-tap-ms = <300>;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		cantil_led: led_0 {
+			gpios = <&gpio0 13 GPIO_ACTIVE_LOW>; /* TODO: set pin */
+		};
+	};
+
+	aliases {
+		cantil-tap = &cantil_tap;
+		cantil-led  = &cantil_led;
+	};
+};

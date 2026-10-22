@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "volume_marker ztest"
+
+# Mirror of firmware/Kconfig:CANTIL_MAX_KEY_SLOTS — storage.c references it,
+# and this app builds standalone against Kconfig.zephyr rather than pulling in
+# the full firmware Kconfig tree (USB/BLE/IMU etc).
+config CANTIL_MAX_KEY_SLOTS
+	int "Maximum number of key slots"
+	default 8
+	range 1 64
+
+source "Kconfig.zephyr"

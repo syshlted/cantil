@@ -1,0 +1,13 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Sparse secure-wipe diagnostic, XIAO BLE Sense.
+ *
+ * Includes the production overlay verbatim, for one reason only: the
+ * code-partition-at-0x1000 override it carries, without which the app links at
+ * the SoftDevice offset and the (SoftDevice-less) UF2 bootloader will not run
+ * it. The p25q16h QSPI node comes from the board DTS; this image addresses it
+ * as a raw device, so the cantil_storage partition in the shared overlay is
+ * present but unused here.
+ */
+#include "../../boards/xiao_ble_nrf52840_sense.overlay"

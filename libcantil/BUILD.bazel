@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The host client — library, CLI and X.509 conformance test.
+#
+# Port of libcantil/CMakeLists.txt (docs/roadmap/bazel-migration.md). Unlike
+# everything else in this repo this is a plain host build: no Zephyr, no
+# platform transition, no Kconfig. Build it with no --config at all:
+#
+#   bazelisk build //libcantil:cantil_cli
+#   bazelisk test  //libcantil:test_x509
+#
+# ── On system libraries ─────────────────────────────────────────────────────
+# libsodium and libcrypto arrive as `linkopts` against the host's shared
+# libraries rather than as Bazel-built dependencies, which is deliberate and
+# matches what the CMake build does through pkg-config. libcrypto is a
+# base-system library present on effectively every Linux target, distros
+# (Fedora included) ship no libcrypto.a, and upstream OpenSSL discourages
+# fully-static linking — see the note in CMakeLists.txt. Building either from
+# source under Bazel would buy hermeticity the product does not want: the
+# OpenSSL the client links is meant to be the one the distribution patches.
+#
+# The cost is that this part of the build is not hermetic and fails at *link*
+# time rather than configure time if the -devel packages are missing:
+#   Fedora:  sudo dnf install libsodium-devel openssl-devel
+#   Debian:  sudo apt install libsodium-dev libssl-dev
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ── X.509 backend selection ─────────────────────────────────────────────────
+#
+# The CMake equivalent is -DCANTIL_HOST_CRYPTO=openssl|wolfssl. Everything
+# libcantil needs from a certificate library is the three functions in
+# src/x509.h, and exactly one implementation is compiled, so the backends
+# never collide.
+#
+#   bazelisk build //libcantil:cantil_cli --//libcantil:x509_backend=wolfssl
+#
+# openssl is the default: libcrypto is the certificate library a Linux host is
+# most likely to already have, and it is the same implementation the test
+# fixtures (tests/gen_fixtures.sh) and the firmware's OpenSSL gate are
+# generated from. The wolfssl backend matches the firmware's library, so a
+# client built that way shares a DER implementation with the device; it is not
+# packaged by Fedora, so build one with scripts/setup_wolfssl_host.sh first.
+string_flag(
+    name = "x509_backend",
+    build_setting_default = "openssl",
+    values = [
+        "openssl",
+        "wolfssl",
+    ],
+)
+
+config_setting(
+    name = "backend_wolfssl",
+    flag_values = {":x509_backend": "wolfssl"},
+)
+
+# System-library shims. Named after what they provide so the dependency edges
+# below read the same as the CMake target_link_libraries lines.
+cc_library(
+    name = "libsodium",
+    linkopts = ["-lsodium"],
+)
+
+cc_library(
+    name = "libx509",
+    linkopts = select({
+        ":backend_wolfssl": ["-lwolfssl"],
+        "//conditions:default": ["-lcrypto"],
+    }),
+)
+
+X509_SRC = select({
+    ":backend_wolfssl": ["src/x509_wolfssl.c"],
+    "//conditions:default": ["src/x509_openssl.c"],
+})
+
+COPTS = [
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+]
+
+# ── libcantil ───────────────────────────────────────────────────────────────
+cc_library(
+    name = "cantil",
+    srcs = [
+        "src/ca.c",
+        "src/clients.c",
+        "src/device.c",
+        "src/discover_usb.c",
+        "src/internal.h",
+        "src/key_store.c",
+        "src/key_store.h",
+        "src/pairing.c",
+        "src/session.c",
+        "src/transport.c",
+        "src/transport_usb.c",
+        "src/trust.c",
+        "src/trust.h",
+        "src/x509.h",
+        # Shared with the firmware — one canonical CBOR codec, compiled into
+        # both sides of the wire (see //common/cbor).
+        "//common/cbor:cantil_cbor.c",
+    ] + X509_SRC,
+    hdrs = [
+        "include/cantil.h",
+        "include/cantil_random.h",
+    ],
+    copts = COPTS,
+    includes = ["include"],
+    linkstatic = True,
+    deps = [
+        ":libsodium",
+        ":libx509",
+        "//common/cbor:cbor_headers",
+    ],
+)
+
+# The CLI lives in //libcantil/cli so the binary is named `cantil` (a Bazel
+# binary takes its target name, and this package's library already owns it —
+# the CMake build gets there with OUTPUT_NAME).
+
+# ── seam exposed to //libcantil/tests ───────────────────────────────────────
+#
+# tests/ is its own package (it also serves fixtures to //firmware/tests), so
+# the backend source and its header have to cross the boundary as labels.
+# test_x509 compiles the backend directly rather than depending on :cantil —
+# it exercises the seam, not the client.
+filegroup(
+    name = "x509_backend_src",
+    srcs = X509_SRC,
+)
+
+cc_library(
+    name = "x509_headers",
+    hdrs = ["src/x509.h"],
+    includes = ["src"],
+)
