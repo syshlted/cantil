@@ -1,0 +1,223 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Cantil firmware — Bazel build (Phase 3, docs/roadmap/bazel-migration.md).
+# uf2_only tier for xiao_ble/nrf52840/sense. Additive: the CMake/west build
+# (scripts/build.sh) remains the reference.
+#
+#   bazelisk build //firmware:cantil \
+#       --platforms=@zephyr//boards/seeed/xiao_ble:nrf52840
+#
+# The three external Zephyr modules Cantil links (wolfSSL, littlefs, SEGGER RTT)
+# are compiled here rather than auto-linked as zephyr-bazel modules: each needs
+# an include path this package owns (firmware/include for the wolfCrypt user
+# settings; the @littlefs / @segger library headers paired with the @zephyr
+# in-tree glue). wolfSSL is still a discovered *config-only* module (its
+# Kconfig defines CONFIG_WOLFSSL); see MODULE.bazel.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@zephyr//:cc.bzl", "zephyr_app", "zephyr_cc_library")
+load("//firmware:uf2.bzl", "UF2_FAMILY_NRF52840")
+
+package(default_visibility = ["//visibility:public"])
+
+# ── Firmware sources/headers exposed to the ztest suites ────────────────────
+# firmware/tests/<suite> compiles the real firmware translation units (that is
+# the point of those suites — see firmware/tests/ztest.bzl). Bazel srcs cannot
+# cross a package boundary with a relative path, so the .c files are exported
+# as labels and the headers are carried by a library target.
+exports_files(glob(["src/**/*.c"]) + ["west.yml"])
+
+cc_library(
+    name = "fw_headers",
+    hdrs = glob(["src/**/*.h"]),
+    includes = ["src"],
+)
+
+# Some suites include a module's own headers unqualified ("crypto.h",
+# "noise_crypto.h"), matching their CMake target_include_directories. Kept as
+# separate targets rather than widening fw_headers, so a suite only ever sees
+# the search path its CMakeLists.txt grants it.
+cc_library(
+    name = "fw_crypto_headers",
+    hdrs = glob(["src/crypto/*.h"]),
+    includes = ["src/crypto"],
+)
+
+cc_library(
+    name = "fw_session_headers",
+    hdrs = glob(["src/session/*.h"]),
+    includes = ["src/session"],
+)
+
+# ── wolfCrypt user settings ─────────────────────────────────────────────────
+# firmware/include/cantil_wolfssl_user_settings.h is the whole wolfCrypt build
+# config (CONFIG_WOLFSSL_SETTINGS_FILE names it). Both the wolfSSL library and
+# the app's crypto seams must compile against identical settings, so this
+# target carries the settings header + defines and both depend on it.
+cc_library(
+    name = "wolfssl_config",
+    hdrs = ["include/cantil_wolfssl_user_settings.h"],
+    defines = [
+        "WOLFSSL_ZEPHYR",
+        "WOLFSSL_USER_SETTINGS",
+        "WOLFSSL_SETTINGS_FILE=\\\"cantil_wolfssl_user_settings.h\\\"",
+        "WOLFSSL_HAVE_MIN",
+        "WOLFSSL_HAVE_MAX",
+    ],
+    includes = ["include"],
+    deps = ["@wolfssl//:headers"],
+)
+
+# ── Module: wolfSSL (wolfCrypt) ─────────────────────────────────────────────
+zephyr_cc_library(
+    name = "wolfssl",
+    srcs = ["@wolfssl//:srcs"],
+    # wolfCrypt trips a lot of the default Zephyr warning set; the reference
+    # build compiles it under zephyr_library() which suppresses these too.
+    copts = [
+        "-Wno-unused-function",
+        "-Wno-unused-variable",
+        "-Wno-unused-but-set-variable",
+    ],
+    deps = [":wolfssl_config"],
+)
+
+# ── Module: littlefs (external library + @zephyr in-tree glue) ───────────────
+zephyr_cc_library(
+    name = "littlefs",
+    srcs = [
+        "@littlefs//:srcs",
+        "@zephyr//modules/littlefs:zephyr_lfs_crc.c",
+    ],
+    deps = [
+        "@littlefs//:headers",
+        "@zephyr//modules/littlefs:lfs_config",
+    ],
+)
+
+# ── Module: SEGGER RTT (external library + @zephyr in-tree glue) ─────────────
+zephyr_cc_library(
+    name = "segger",
+    srcs = [
+        "@segger//:srcs",
+        "@zephyr//modules/segger:SEGGER_RTT_zephyr.c",
+    ],
+    defines = ["SEGGER_RTT_ALIGNMENT=CONFIG_SEGGER_RTT_CB_ALIGNMENT"],
+    deps = ["@segger//:headers"],
+)
+
+# ── Session X.509 identity constant (transport + pairing, T-01) ─────────────
+# Parse session_x509.toml into a packed x509_data_t blob emitted as a C array.
+# The script exits non-zero (failing the build) if the TOML is missing,
+# malformed, or sets a disallowed key-usage bit — same guard as CMake's
+# add_custom_command.
+genrule(
+    name = "session_x509_constant",
+    srcs = ["session_x509.toml"],
+    outs = ["cantil_session_x509_constant.c"],
+    cmd = "$(execpath //scripts:encode_session_x509) $(execpath session_x509.toml) --c $@",
+    tools = ["//scripts:encode_session_x509"],
+)
+
+# ── Application ─────────────────────────────────────────────────────────────
+zephyr_cc_library(
+    name = "app_lib",
+    srcs = [
+        "src/main.c",
+        "src/gesture/gesture.c",
+        "src/gesture/tap_button.c",  # CONFIG_CANTIL_INPUT_BUTTON
+        "src/led/led.c",
+        "src/storage/storage.c",
+        "src/storage/volume_marker.c",
+        "src/storage/no_format.c",  # __wrap_lfs_format (see linkopts below)
+        "src/crypto/device_id.c",
+        "src/crypto/zeroize.c",
+        "src/crypto/crypto_wolfssl.c",
+        "src/crypto/wc_rand.c",
+        "src/transport/transport.c",
+        "src/transport/transport_usb.c",  # CONFIG_CANTIL_TRANSPORT_USB
+        "src/session/session.c",
+        "src/session/session_slot.c",
+        "src/session/noise_crypto_wolfssl.c",
+        "src/protocol/protocol.c",
+        "src/ca/ca.c",
+        "src/ca/der_write.c",
+        "src/ca/certgen_wolfssl.c",
+        "src/ca/certparse_wolfssl.c",
+        "src/clients/client_bond.c",
+        "src/clients/pairing.c",
+        "src/names/names.c",
+        "src/names/names_data.c",
+        "//common/cbor:cantil_cbor.c",
+        ":session_x509_constant",
+    ],
+    hdrs = glob([
+        "src/**/*.h",
+        "include/*.h",
+    ]),
+    # Zephyr's CMake compiles the application library WITHOUT -Werror (that is
+    # gated on CONFIG_COMPILER_WARNINGS_AS_ERRORS, default n); zephyr-bazel's
+    # zephyr_cc_library hard-codes -Werror. Demote back to warnings so the app
+    # matches the reference build — notably Zephyr's __DEPRECATED_MACRO
+    # (FIXED_PARTITION_* in v4.4) emits an unfilterable _Pragma("GCC warning")
+    # that only a bare -Wno-error can keep non-fatal.
+    copts = [
+        "-Wno-error",
+        "-Wno-unused-parameter",
+    ],
+    includes = ["src"],
+    # Close the last filesystem-format route at link time: redirect lfs_format
+    # to the refusing __wrap_lfs_format in no_format.c. Nothing references
+    # __real_lfs_format, so --gc-sections drops the real formatter. Mirrors
+    # firmware/CMakeLists.txt (CONFIG_FILE_SYSTEM_MKFS=n path).
+    linkopts = ["-Wl,--wrap=lfs_format"],
+    deps = [
+        "//common/cbor:cbor_headers",
+        ":littlefs",
+        ":segger",
+        ":wolfssl",
+        ":wolfssl_config",
+    ],
+)
+
+# uf2_family also emits //firmware:cantil.uf2 — the flashable artifact, dragged
+# onto the XIAO-SENSE drive after a double-tap reset (scripts/build.sh --flash
+# does it for you).
+zephyr_app(
+    name = "cantil",
+    uf2_family = UF2_FAMILY_NRF52840,
+    deps = [":app_lib"],
+)
+
+# ── Symbol invariants ───────────────────────────────────────────────────────
+# The two properties of this image that C cannot state, and that were verified
+# by hand with `nm` when the Bazel port landed:
+#
+#   * No filesystem formatter. CONFIG_FILE_SYSTEM_MKFS=n plus the
+#     --wrap=lfs_format above should leave --gc-sections nothing to keep. If
+#     either half regressed, production would silently regain the ability to
+#     erase the key store — and nothing else in the build would notice.
+#   * No mbedTLS. The firmware is wolfCrypt-only (Phase 2); an mbedtls_* symbol
+#     means a second crypto implementation got linked in behind our backs.
+#
+# A genrule, not a test: the ELF is a cross-compiled artifact in the app's own
+# platform configuration, where a test binary could not run on the host anyway.
+# Making it a build action is the stronger form regardless — `bazel build
+# //firmware:cantil.uf2` cannot produce a flashable image that violates these,
+# and there is no way to skip it. scripts/build.sh builds it alongside the UF2.
+genrule(
+    name = "cantil_invariants",
+    srcs = [":cantil.elf"],
+    outs = ["cantil.invariants.txt"],
+    cmd = "$(execpath //scripts:check_elf_symbols) $(execpath :cantil.elf) " +
+          # The wrapper must be present — its absence would mean the linker
+          # dropped the refusing stub rather than the real formatter.
+          "--require __wrap_lfs_format " +
+          "--forbid lfs_format " +
+          "--forbid __real_lfs_format " +
+          "--forbid fs_mkfs " +
+          "--forbid littlefs_mkfs " +
+          "--forbid-pattern '^mbedtls_' " +
+          "--out $@",
+    tools = ["//scripts:check_elf_symbols"],
+)

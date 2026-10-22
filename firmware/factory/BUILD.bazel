@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Step-1 factory image — creates the LittleFS volume and writes its identity
+# marker, then stops. No CA, no transport, no gesture, no key material.
+#
+#   bazelisk build //firmware/factory:cantil_factory --config=xiao
+#
+# This is the only Cantil binary that contains lfs_format. Production is built
+# with CONFIG_FILE_SYSTEM_MKFS=n and additionally link-wraps the symbol away
+# (//firmware:app_lib's --wrap=lfs_format); the ability to format lives here,
+# in an image flashed deliberately at a bench. See
+# docs/roadmap/two-step-provisioning.md.
+#
+# Port of firmware/factory/CMakeLists.txt. Note what is NOT here: the CMake
+# file appends firmware/ to DTS_ROOT so the app resolves the shared bindings
+# under firmware/dts. Neither this image's overlay nor wipe_diag's uses a
+# custom compatible — only firmware/boards' cantil,tap-button does — so under
+# Bazel the app dir being its own DTS root is enough.
+
+load("@zephyr//:cc.bzl", "zephyr_app", "zephyr_cc_library")
+load("//firmware:uf2.bzl", "UF2_FAMILY_NRF52840")
+
+package(default_visibility = ["//visibility:public"])
+
+zephyr_cc_library(
+    name = "factory_lib",
+    srcs = [
+        "src/main.c",
+        # The marker writer and the FICR-derived volume id are the *production*
+        # translation units, compiled here unchanged. That is the whole point:
+        # a marker this image writes must be byte-identical to what production
+        # validates, so the two cannot be allowed to drift into separate
+        # implementations.
+        "//firmware:src/crypto/device_id.c",
+        "//firmware:src/storage/volume_marker.c",
+    ],
+    copts = [
+        "-Wno-error",
+        "-Wno-unused-parameter",
+    ],
+    deps = [
+        "//firmware:fw_headers",
+        "//firmware:littlefs",
+        "//firmware:segger",
+    ],
+)
+
+# uf2_family also emits cantil_factory.uf2 — this image is flashed at a bench
+# over the UF2 bootloader like any other.
+zephyr_app(
+    name = "cantil_factory",
+    uf2_family = UF2_FAMILY_NRF52840,
+    deps = [":factory_lib"],
+)
+
+# ── Symbol invariants ───────────────────────────────────────────────────────
+# The mirror image of //firmware:cantil_invariants, and the half that is easy
+# to forget: this image is *supposed* to carry the formatter. A factory image
+# that quietly lost it would not fail to build — it would fail at a bench,
+# leaving an unformatted device, which is a much worse place to find out.
+genrule(
+    name = "cantil_factory_invariants",
+    srcs = [":cantil_factory.elf"],
+    outs = ["cantil_factory.invariants.txt"],
+    cmd = "$(execpath //scripts:check_elf_symbols) " +
+          "$(execpath :cantil_factory.elf) " +
+          "--require lfs_format " +
+          "--require fs_mkfs " +
+          "--require littlefs_mkfs " +
+          # Same wolfCrypt-only rule as production: this image links the real
+          # device_id.c and volume_marker.c, so it has the same exposure.
+          "--forbid-pattern '^mbedtls_' " +
+          "--out $@",
+    tools = ["//scripts:check_elf_symbols"],
+)

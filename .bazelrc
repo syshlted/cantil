@@ -1,0 +1,69 @@
+# Copyright 2026 The Pigweed Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not
+# use this file except in compliance with the License. You may obtain a copy of
+# the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations under
+# the License.
+
+import %workspace%/common.bazelrc
+
+# Backends can not yet be set via inherited platforms like regular Pigweed
+# bazel projects. They can only be set via .bazelrc --config's with Zephyr.
+build:pw_zephyr_modules --@pigweed//pw_chrono:system_clock_backend=@pigweed//pw_chrono_zephyr:system_clock
+build:pw_zephyr_modules --@pigweed//pw_chrono:system_timer_backend=@pigweed//pw_chrono_zephyr:system_timer
+build:pw_zephyr_modules --@pigweed//pw_sync:binary_semaphore_backend=@pigweed//pw_sync_zephyr:binary_semaphore
+build:pw_zephyr_modules --@pigweed//pw_sync:counting_semaphore_backend=@pigweed//pw_sync_zephyr:counting_semaphore
+build:pw_zephyr_modules --@pigweed//pw_sync:interrupt_spin_lock_backend=@pigweed//pw_sync_zephyr:interrupt_spin_lock
+build:pw_zephyr_modules --@pigweed//pw_sync:mutex_backend=@pigweed//pw_sync_zephyr:mutex
+build:pw_zephyr_modules --@pigweed//pw_sync:timed_mutex_backend=@pigweed//pw_sync_zephyr:timed_mutex
+build:pw_zephyr_modules --@pigweed//pw_sync:timed_thread_notification_backend=@pigweed//pw_sync_zephyr:timed_thread_notification
+build:pw_zephyr_modules --@pigweed//pw_sys_io:backend=@pigweed//pw_sys_io_zephyr
+
+# ── Cantil target shortcuts ─────────────────────────────────────────────────
+# The platform is not inferable from the target, so every build needs one.
+#
+#   bazelisk build //firmware:cantil --config=xiao   # production firmware
+#   bazelisk test //firmware/tests/... --config=sim  # ztest suites
+#
+# --config=sim is native_sim/native/64, matching scripts/test.sh: the plain
+# native_sim/native variant leaves CONFIG_64BIT unset while the toolchain
+# still compiles 64-bit.
+build:xiao --platforms=@zephyr//boards/seeed/xiao_ble:nrf52840_sense
+build:sim --platforms=@zephyr//boards/native/native_sim:native_64
+
+# The host client (//libcantil) is not a Zephyr build: no platform, no Kconfig.
+# It does need the host's own C toolchain rather than Pigweed's host_clang,
+# whose sysroot has no <openssl/x509.h> or <sodium.h> — libcantil links the
+# system libcrypto and libsodium on purpose (see libcantil/BUILD.bazel).
+#
+#   bazelisk build //libcantil:cantil_cli --config=host
+#   bazelisk test //libcantil/... --config=host
+#
+# Three flags, each load-bearing:
+#   1. common.bazelrc (Pigweed's vendored flag file) sets
+#      BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1 — "we vendor all our toolchains, and
+#      CI VMs may not have a local one". True for Pigweed; false for a client
+#      that deliberately links the distro's OpenSSL. Re-enabled here only.
+#   2. --extra_toolchains outranks the toolchains MODULE.bazel registers.
+#   3. --extra_execution_platforms: MODULE.bazel registers native_sim as an
+#      execution platform for the ztest suites and it wins by registration
+#      order, so the local toolchain — which needs a real linux/x86_64 exec
+#      platform — would never be selectable without this.
+common:host --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=0
+build:host --extra_toolchains=@local_config_cc_toolchains//:all
+build:host --extra_execution_platforms=@platforms//host
+
+# User bazelrc file; see
+# https://bazel.build/configure/best-practices#bazelrc-file
+#
+# Note: this should be at the bottom of the file, so that user-specified
+# options override anything in this file
+# (https://bazel.build/run/bazelrc#imports)
+try-import %workspace%/user.bazelrc

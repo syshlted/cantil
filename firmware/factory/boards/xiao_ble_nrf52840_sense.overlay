@@ -1,0 +1,29 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Factory image, XIAO BLE Sense.
+ *
+ * Includes the production overlay verbatim rather than restating the storage
+ * partition. That is not laziness — it is the point. The volume identity
+ * marker records the offset and size the volume was created for, and
+ * production refuses to mount a volume whose marker disagrees. If this file
+ * carried its own copy of the cantil_storage node, the two could drift, and
+ * every device made in between would be born with a marker that its own
+ * production firmware rejects.
+ *
+ * One source of truth, included from both sides.
+ */
+#include "../../boards/xiao_ble_nrf52840_sense.overlay"
+
+/*
+ * Status-LED feedback. The shared overlay repurposes the RGB pins (P0.26/30/06)
+ * to PWM and disables the board's gpio-leds; the factory image runs no PWM, so
+ * revert to the plain gpio-leds and let the generic LED API drive them.
+ * led0 = Red, led1 = Green, led2 = Blue (all GPIO_ACTIVE_LOW).
+ */
+&cantil_pwmleds { status = "disabled"; };
+&pwm0 { status = "disabled"; };
+&led0 { status = "okay"; };
+&led1 { status = "okay"; };
+&led2 { status = "okay"; };
+

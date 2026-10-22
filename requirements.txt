@@ -1,0 +1,29 @@
+# Python packages needed for the firmware/client build itself (imgtool via
+# nrfutil, PyYAML for Zephyr's own build scripts).
+#
+# Install these two on their own, NOT via `pip install -r requirements.txt`
+# combined with requirements-dev.txt: nrfutil==5.2.0 declares pyyaml~=4.2b1,
+# which directly conflicts with the pyyaml>=6.0.1 override below whenever pip
+# resolves both in the same job (ResolutionImpossible) — that includes
+# `pip install -r requirements.txt` on this file itself, since both lines
+# live here together. Installing them as two separate commands avoids it:
+# pip only re-resolves what a command's own arguments target, not a
+# same-named package that happens to already be installed.
+#
+#   python3 -m venv venv
+#   . venv/bin/activate
+#   pip install nrfutil==5.2.0
+#   pip install pyyaml>=6.0.1
+#   pip install -r requirements-dev.txt
+#
+# Claude Code activates this venv automatically via .claude/settings.json.
+
+# Nordic Semiconductor DFU + package generation
+nrfutil==5.2.0
+
+# nrfutil 5.2.0 pins pyyaml~=4.2b1, but PyYAML 4.x calls
+# collections.Hashable which was removed in Python 3.10+ — the venv runs on
+# 3.14, so Zephyr's build (list_hardware.py) crashes during board lookup with
+# that pin.  Force a modern PyYAML; nrfutil's imports still work fine.  Pin
+# applied after nrfutil so pip's resolver records the override.
+pyyaml>=6.0.1

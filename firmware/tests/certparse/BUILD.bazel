@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Firmware-side X.509 parser conformance against the shared fixtures.
+# Mirrors firmware/tests/certparse/CMakeLists.txt (scripts/test.sh stays the
+# reference runner). See //firmware/tests:ztest.bzl.
+
+load("//firmware/tests:ztest.bzl", "cantil_ztest", "WOLFSSL_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+cantil_ztest(
+    name = "certparse",
+    srcs = [
+        "src/main.c",
+        "//firmware:src/ca/certparse_wolfssl.c",
+        "//firmware:src/crypto/wc_rand.c",
+    ],
+    deps = [
+        "//libcantil/tests:fixtures",
+    ] + WOLFSSL_DEPS,
+)

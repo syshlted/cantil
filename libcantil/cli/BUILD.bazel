@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The `cantil` command-line tool.
+#
+#   bazelisk build //libcantil/cli:cantil --config=host
+#   bazel-bin/libcantil/cli/cantil version
+#
+# Its own package purely so the binary is named `cantil`: a Bazel binary takes
+# its target name, and //libcantil already uses that name for the library. The
+# CMake build reaches the same place with set_target_properties(OUTPUT_NAME).
+#
+# Not ported: CANTIL_CLI_STATIC. That option exists only to bundle libsodium
+# into a self-contained AppImage, and scripts/build-appimage.sh still drives
+# the CMake build for release packaging — see docs/build-and-release.md.
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "cantil",
+    srcs = ["main.c"],
+    copts = [
+        "-Wall",
+        "-Wextra",
+    ],
+    deps = ["//libcantil:cantil"],
+)

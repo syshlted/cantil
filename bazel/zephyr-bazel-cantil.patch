@@ -1,0 +1,1412 @@
+diff --git a/bazel/private/zephyr_kconfig_gen_symbols.bzl b/bazel/private/zephyr_kconfig_gen_symbols.bzl
+index 34758dc..71ac7ad 100644
+--- a/bazel/private/zephyr_kconfig_gen_symbols.bzl
++++ b/bazel/private/zephyr_kconfig_gen_symbols.bzl
+@@ -38,6 +38,14 @@ def _zephyr_kconfig_schema_impl(rctx):
+ 
+     resolved_modules = resolve_module_roots(rctx, state)
+ 
++    # Application source dirs — apps may define their own Kconfig symbols that
++    # must land in the global schema (see kconfig_gen_symbols.py --app-dirs).
++    resolved_app_dirs = []
++    for a_label in state.get("apps", {}).values():
++        a_dir = str(rctx.path(Label(a_label)).dirname)
++        if a_dir not in resolved_app_dirs:
++            resolved_app_dirs.append(a_dir)
++
+     kconfig_gen_symbols_py = rctx.path(rctx.attr._kconfig_gen_symbols_py)
+ 
+     python = get_python(rctx, extra_import_paths = [
+@@ -65,6 +73,11 @@ def _zephyr_kconfig_schema_impl(rctx):
+         oot_dts_roots = resolved_oot_dts_roots,
+     )
+ 
++    # get_kconfig_args has no app-dirs param; append directly.
++    if resolved_app_dirs:
++        args.append("--app-dirs")
++        args.extend(resolved_app_dirs)
++
+     result = python.execute(args)
+     if result.return_code != 0:
+         fail("Kconfig schema generation failed: %s" % result.stderr)
+diff --git a/bazel_overlay/BUILD.bazel b/bazel_overlay/BUILD.bazel
+index fac2bb3..f65538e 100644
+--- a/bazel_overlay/BUILD.bazel
++++ b/bazel_overlay/BUILD.bazel
+@@ -365,7 +365,17 @@ cc_library(
+     }),
+     deps = [
+         "//scripts/native_simulator:native_simulator_headers",
+-    ],
++    ] + select({
++        "//conditions:default": [],
++        "@zephyr_kconfig//:CONFIG_FAKE_ENTROPY_NATIVE_SIM=true": [
++            "//drivers/entropy:fake_entropy_native_bottom",
++        ],
++    }) + select({
++        "//conditions:default": [],
++        "@zephyr_kconfig//:CONFIG_FLASH_SIMULATOR=true": [
++            "//drivers/flash:flash_simulator_native",
++        ],
++    }),
+ )
+ 
+ cc_library(
+diff --git a/bazel_overlay/boards/BUILD.bazel b/bazel_overlay/boards/BUILD.bazel
+index 1fc7bd0..1e60b5c 100644
+--- a/bazel_overlay/boards/BUILD.bazel
++++ b/bazel_overlay/boards/BUILD.bazel
+@@ -27,3 +27,12 @@ constraint_value(
+     name = "sim",
+     constraint_setting = ":zephyr_board_type",
+ )
++
++# Shared board DTS snippets that some boards #include, e.g. Seeed XIAO BLE's
++# common dtsi pulls in <../boards/common/usb/cdc_acm_serial.dtsi>. Exposed as a
++# filegroup so a board's dts_library can list it in `references` (the -I at
++# <zephyr>/dts already makes ../boards/... resolvable; this supplies the file).
++filegroup(
++    name = "common_usb_dts",
++    srcs = glob(["common/usb/*.dtsi"]),
++)
+diff --git a/bazel_overlay/boards/adafruit/feather_nrf52840/BUILD.bazel b/bazel_overlay/boards/adafruit/feather_nrf52840/BUILD.bazel
+new file mode 100644
+index 0000000..e9cfec8
+--- /dev/null
++++ b/bazel_overlay/boards/adafruit/feather_nrf52840/BUILD.bazel
+@@ -0,0 +1,145 @@
++# SPDX-License-Identifier: Apache-2.0
++#
++# Adafruit Feather nRF52840 Express. Board package for the Bazel build, modeled
++# on boards/nordic/nrf52833dk. Added for the Cantil firmware Bazel migration
++# (docs/roadmap/bazel-migration.md). Candidate for upstreaming to zephyr-bazel.
++#
++# Note the directory name (feather_nrf52840) is not the board name
++# (adafruit_feather_nrf52840); board.yml is authoritative and the transition's
++# resolve_board_id works off the discovery index, so platform ":nrf52840"
++# resolves via the SoC/variant rule to "adafruit_feather_nrf52840/nrf52840".
++#
++# Two platforms, because the variants are not interchangeable: the base target
++# uses the plain partition layout and has no CDC ACM node, while ":nrf52840_uf2"
++# uses the UF2/SoftDevice-v6 layout and pulls in cdc_acm_serial.dtsi. The uf2
++# variant is the one relevant to Cantil — the Feather, like the XIAO, is flashed
++# by dragging a .uf2 onto a mass-storage bootloader, and USB CDC needs the node.
++# The board's "sense" variants are not defined here; nothing targets them.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("@zephyr//:defs.bzl", "dts_cc_library", "dts_library")
++load("@zephyr//:flags.bzl", "flags_from_dict")
++load("@zephyr-bazel//bazel:runner.bzl", "zephyr_runner_config")
++
++package(default_visibility = ["//visibility:public"])
++
++# Shared by both variants' .dts files.
++_COMMON_REFERENCES = [
++    "adafruit_feather_nrf52840_common.dtsi",
++    "adafruit_feather_nrf52840-pinctrl.dtsi",
++    "feather_connector.dtsi",
++    # SoC + shared Nordic dtsi (nrf52840_qiaa.dtsi and the partition layouts).
++    "@zephyr//dts/arm/nordic",
++    "@zephyr//dts/common",
++    "@zephyr//dts/vendor/nordic",
++    # input-event-codes.h.
++    "@zephyr//include:dt_bindings",
++]
++
++dts_library(
++    name = "devicetree_lib",
++    includes = [
++        "@zephyr//dts:dts_includes",
++        "@zephyr//include:include_includes",
++    ],
++    overlay = "adafruit_feather_nrf52840.dts",
++    references = _COMMON_REFERENCES,
++)
++
++dts_cc_library(
++    name = "devicetree_generated",
++    bindings = ["@zephyr//dts:bindings"],
++    dts_lib = ":devicetree_lib",
++    target_compatible_with = [":adafruit_feather_nrf52840"],
++)
++
++dts_library(
++    name = "devicetree_uf2_lib",
++    includes = [
++        "@zephyr//dts:dts_includes",
++        "@zephyr//include:include_includes",
++    ],
++    overlay = "adafruit_feather_nrf52840_nrf52840_uf2.dts",
++    references = _COMMON_REFERENCES + [
++        # cdc_acm_serial.dtsi, included as <../boards/common/usb/...>.
++        "@zephyr//boards:common_usb_dts",
++    ],
++)
++
++dts_cc_library(
++    name = "devicetree_uf2_generated",
++    bindings = ["@zephyr//dts:bindings"],
++    dts_lib = ":devicetree_uf2_lib",
++    target_compatible_with = [":adafruit_feather_nrf52840"],
++)
++
++constraint_value(
++    name = "adafruit_feather_nrf52840",
++    constraint_setting = "@zephyr//boards:board_name",
++)
++
++cc_library(
++    name = "hal_soc_headers_library",
++    deps = [
++        "@hal_nordic//:dt_interface",
++        "@zephyr//modules/hal_nordic/nrfx:nrfx_hdrs",
++    ],
++)
++
++zephyr_runner_config(
++    name = "nrf52840_runner",
++    args = [
++        "--device=nRF52840_xxAA",
++        "--speed=4000",
++    ],
++    runner = "jlink",
++)
++
++# The board has no CMakeLists sources.
++filegroup(
++    name = "feather_nrf52840_extra_srcs",
++    srcs = ["@zephyr//:empty_files"],
++)
++
++platform(
++    name = "nrf52840",
++    constraint_values = [
++        ":adafruit_feather_nrf52840",
++        "@platforms//cpu:armv7e-m",
++        "@zephyr//constraints/arm:cortex-m4",
++        "//boards:hw",
++    ],
++    flags = flags_from_dict({
++        "@zephyr//:board_runner_config": "@zephyr//boards/adafruit/feather_nrf52840:nrf52840_runner",
++        "@zephyr//:dts_cc_library": "@zephyr//boards/adafruit/feather_nrf52840:devicetree_generated",
++        "@zephyr//:hal_soc_extra_srcs": "@zephyr//boards/adafruit/feather_nrf52840:feather_nrf52840_extra_srcs",
++        "@zephyr//:hal_soc_headers_library": "@zephyr//boards/adafruit/feather_nrf52840:hal_soc_headers_library",
++        "@zephyr//:soc": "@zephyr//soc/nordic/nrf52",
++    }),
++    parents = ["@zephyr//platforms:cortex_m"],
++)
++
++# adafruit_feather_nrf52840/nrf52840/uf2 — resolve_board_id joins the qualifiers
++# with an underscore, so the platform name is "nrf52840_uf2".
++platform(
++    name = "nrf52840_uf2",
++    constraint_values = [
++        ":adafruit_feather_nrf52840",
++        "@platforms//cpu:armv7e-m",
++        "@zephyr//constraints/arm:cortex-m4",
++        "//boards:hw",
++    ],
++    flags = flags_from_dict({
++        "@zephyr//:board_runner_config": "@zephyr//boards/adafruit/feather_nrf52840:nrf52840_runner",
++        "@zephyr//:dts_cc_library": "@zephyr//boards/adafruit/feather_nrf52840:devicetree_uf2_generated",
++        "@zephyr//:hal_soc_extra_srcs": "@zephyr//boards/adafruit/feather_nrf52840:feather_nrf52840_extra_srcs",
++        "@zephyr//:hal_soc_headers_library": "@zephyr//boards/adafruit/feather_nrf52840:hal_soc_headers_library",
++        "@zephyr//:soc": "@zephyr//soc/nordic/nrf52",
++    }),
++    parents = ["@zephyr//platforms:cortex_m"],
++)
++
++alias(
++    name = "feather_nrf52840",
++    actual = ":nrf52840",
++)
+diff --git a/bazel_overlay/boards/nordic/nrf52840dk/BUILD.bazel b/bazel_overlay/boards/nordic/nrf52840dk/BUILD.bazel
+new file mode 100644
+index 0000000..0dbd153
+--- /dev/null
++++ b/bazel_overlay/boards/nordic/nrf52840dk/BUILD.bazel
+@@ -0,0 +1,93 @@
++# SPDX-License-Identifier: Apache-2.0
++#
++# Nordic nRF52840 DK (PCA10056). Board package for the Bazel build, modeled on
++# boards/nordic/nrf52833dk. Added for the Cantil firmware Bazel migration
++# (docs/roadmap/bazel-migration.md). Candidate for upstreaming to zephyr-bazel.
++#
++# Only the nrf52840 SoC target is defined. board.yml also declares nrf52811
++# (the DK running the 52840 in nRF52811 emulation mode), which additionally
++# needs the DEVELOP_IN_NRF52840 / NRFX_COREDEP_DELAY_US_LOOP_CYCLES defines
++# from the board CMakeLists; nothing here targets it.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("@zephyr//:defs.bzl", "dts_cc_library", "dts_library")
++load("@zephyr//:flags.bzl", "flags_from_dict")
++load("@zephyr-bazel//bazel:runner.bzl", "zephyr_runner_config")
++
++package(default_visibility = ["//visibility:public"])
++
++dts_library(
++    name = "devicetree_lib",
++    includes = [
++        "@zephyr//dts:dts_includes",
++        "@zephyr//include:include_includes",
++    ],
++    overlay = "nrf52840dk_nrf52840.dts",
++    references = [
++        "nrf52840dk_nrf52840-pinctrl.dtsi",
++        # SoC + shared Nordic dtsi (nrf52840_qiaa.dtsi, nrf52840_partition.dtsi).
++        "@zephyr//dts/arm/nordic",
++        "@zephyr//dts/common",
++        "@zephyr//dts/vendor/nordic",
++        # arduino-header-r3.h, input-event-codes.h.
++        "@zephyr//include:dt_bindings",
++    ],
++)
++
++dts_cc_library(
++    name = "devicetree_generated",
++    bindings = ["@zephyr//dts:bindings"],
++    dts_lib = ":devicetree_lib",
++    target_compatible_with = [":nordic_nrf52840dk"],
++)
++
++constraint_value(
++    name = "nordic_nrf52840dk",
++    constraint_setting = "@zephyr//boards:board_name",
++)
++
++cc_library(
++    name = "hal_soc_headers_library",
++    deps = [
++        "@hal_nordic//:dt_interface",
++        "@zephyr//modules/hal_nordic/nrfx:nrfx_hdrs",
++    ],
++)
++
++zephyr_runner_config(
++    name = "nrf52840_runner",
++    args = [
++        "--device=nRF52840_xxAA",
++        "--speed=4000",
++    ],
++    runner = "jlink",
++)
++
++# The board has no CMakeLists sources for the nrf52840 target.
++filegroup(
++    name = "nrf52840dk_extra_srcs",
++    srcs = ["@zephyr//:empty_files"],
++)
++
++platform(
++    name = "nrf52840",
++    constraint_values = [
++        ":nordic_nrf52840dk",
++        "@platforms//cpu:armv7e-m",
++        "@zephyr//constraints/arm:cortex-m4",
++        "//boards:hw",
++    ],
++    flags = flags_from_dict({
++        "@zephyr//:board_runner_config": "@zephyr//boards/nordic/nrf52840dk:nrf52840_runner",
++        "@zephyr//:dts_cc_library": "@zephyr//boards/nordic/nrf52840dk:devicetree_generated",
++        "@zephyr//:hal_soc_extra_srcs": "@zephyr//boards/nordic/nrf52840dk:nrf52840dk_extra_srcs",
++        "@zephyr//:hal_soc_headers_library": "@zephyr//boards/nordic/nrf52840dk:hal_soc_headers_library",
++        "@zephyr//:soc": "@zephyr//soc/nordic/nrf52",
++    }),
++    parents = ["@zephyr//platforms:cortex_m"],
++)
++
++alias(
++    name = "nrf52840dk",
++    actual = ":nrf52840",
++)
+diff --git a/bazel_overlay/boards/nordic/nrf52840dongle/BUILD.bazel b/bazel_overlay/boards/nordic/nrf52840dongle/BUILD.bazel
+new file mode 100644
+index 0000000..8c490fc
+--- /dev/null
++++ b/bazel_overlay/boards/nordic/nrf52840dongle/BUILD.bazel
+@@ -0,0 +1,99 @@
++# SPDX-License-Identifier: Apache-2.0
++#
++# Nordic nRF52840 Dongle (PCA10059). Board package for the Bazel build, modeled
++# on boards/nordic/nrf52833dk. Added for the Cantil firmware Bazel migration
++# (docs/roadmap/bazel-migration.md). Candidate for upstreaming to zephyr-bazel.
++#
++# Only the default nrf52840 target is defined; board.yml also declares a "bare"
++# variant (no nRF5 bootloader offset), which needs its own .dts and platform.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("@zephyr//:defs.bzl", "dts_cc_library", "dts_library")
++load("@zephyr//:flags.bzl", "flags_from_dict")
++load("@zephyr-bazel//bazel:runner.bzl", "zephyr_runner_config")
++
++package(default_visibility = ["//visibility:public"])
++
++dts_library(
++    name = "devicetree_lib",
++    includes = [
++        "@zephyr//dts:dts_includes",
++        "@zephyr//include:include_includes",
++    ],
++    overlay = "nrf52840dongle_nrf52840.dts",
++    references = [
++        # Local board dtsi pulled in by the .dts.
++        "nrf52840dongle_nrf52840_common.dtsi",
++        "nrf52840dongle_nrf52840-pinctrl.dtsi",
++        # SoC + shared Nordic dtsi (nrf52840_qiaa.dtsi).
++        "@zephyr//dts/arm/nordic",
++        "@zephyr//dts/common",
++        "@zephyr//dts/vendor/nordic",
++        # input-event-codes.h.
++        "@zephyr//include:dt_bindings",
++        # cdc_acm_serial.dtsi, included as <../boards/common/usb/...>.
++        "@zephyr//boards:common_usb_dts",
++    ],
++)
++
++dts_cc_library(
++    name = "devicetree_generated",
++    bindings = ["@zephyr//dts:bindings"],
++    dts_lib = ":devicetree_lib",
++    target_compatible_with = [":nordic_nrf52840dongle"],
++)
++
++constraint_value(
++    name = "nordic_nrf52840dongle",
++    constraint_setting = "@zephyr//boards:board_name",
++)
++
++cc_library(
++    name = "hal_soc_headers_library",
++    deps = [
++        "@hal_nordic//:dt_interface",
++        "@zephyr//modules/hal_nordic/nrfx:nrfx_hdrs",
++    ],
++)
++
++zephyr_runner_config(
++    name = "nrf52840_runner",
++    args = [
++        "--device=nRF52840_xxAA",
++        "--speed=4000",
++    ],
++    runner = "jlink",
++)
++
++# Unlike the DK, this board has a CMakeLists: board.c supplies
++# board_early_init_hook(), which raises REGOUT0 to 3.0 V so the LEDs light in
++# USB high-voltage mode. BOARD_NRF52840DONGLE selects BOARD_EARLY_INIT_HOOK and
++# kernel/init.c calls the hook unconditionally with no weak default, so omitting
++# this source is a link error rather than a silent behaviour change.
++filegroup(
++    name = "nrf52840dongle_extra_srcs",
++    srcs = ["board.c"],
++)
++
++platform(
++    name = "nrf52840",
++    constraint_values = [
++        ":nordic_nrf52840dongle",
++        "@platforms//cpu:armv7e-m",
++        "@zephyr//constraints/arm:cortex-m4",
++        "//boards:hw",
++    ],
++    flags = flags_from_dict({
++        "@zephyr//:board_runner_config": "@zephyr//boards/nordic/nrf52840dongle:nrf52840_runner",
++        "@zephyr//:dts_cc_library": "@zephyr//boards/nordic/nrf52840dongle:devicetree_generated",
++        "@zephyr//:hal_soc_extra_srcs": "@zephyr//boards/nordic/nrf52840dongle:nrf52840dongle_extra_srcs",
++        "@zephyr//:hal_soc_headers_library": "@zephyr//boards/nordic/nrf52840dongle:hal_soc_headers_library",
++        "@zephyr//:soc": "@zephyr//soc/nordic/nrf52",
++    }),
++    parents = ["@zephyr//platforms:cortex_m"],
++)
++
++alias(
++    name = "nrf52840dongle",
++    actual = ":nrf52840",
++)
+diff --git a/bazel_overlay/boards/seeed/xiao_ble/BUILD.bazel b/bazel_overlay/boards/seeed/xiao_ble/BUILD.bazel
+new file mode 100644
+index 0000000..beec341
+--- /dev/null
++++ b/bazel_overlay/boards/seeed/xiao_ble/BUILD.bazel
+@@ -0,0 +1,117 @@
++# SPDX-License-Identifier: Apache-2.0
++#
++# Seeed Studio XIAO BLE (Sense) — nRF52840. Board package for the Bazel build,
++# modeled on boards/nordic/nrf52833dk. Added for the Cantil firmware Bazel
++# migration (docs/roadmap/bazel-migration.md). Candidate for upstreaming to
++# zephyr-bazel.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("@zephyr//:defs.bzl", "dts_cc_library", "dts_library")
++load("@zephyr//:flags.bzl", "flags_from_dict")
++load("@zephyr-bazel//bazel:runner.bzl", "zephyr_runner_config")
++
++package(default_visibility = ["//visibility:public"])
++
++dts_library(
++    name = "devicetree_lib",
++    includes = [
++        "@zephyr//dts:dts_includes",
++        "@zephyr//include:include_includes",
++    ],
++    overlay = "xiao_ble_nrf52840_sense.dts",
++    references = [
++        # Local board dtsi pulled in by the sense .dts.
++        "xiao_ble_common.dtsi",
++        "xiao_ble-pinctrl.dtsi",
++        "seeed_xiao_connector.dtsi",
++        # SoC + shared Nordic dtsi (nrf52840_qiaa.dtsi, partition layout).
++        "@zephyr//dts/arm/nordic",
++        "@zephyr//dts/common",
++        "@zephyr//dts/vendor/nordic",
++        "@zephyr//include:dt_bindings",
++        # cdc_acm_serial.dtsi, included as <../boards/common/usb/...>.
++        "@zephyr//boards:common_usb_dts",
++    ],
++)
++
++dts_cc_library(
++    name = "devicetree_generated",
++    bindings = ["@zephyr//dts:bindings"],
++    dts_lib = ":devicetree_lib",
++    target_compatible_with = [":seeed_xiao_ble"],
++)
++
++constraint_value(
++    name = "seeed_xiao_ble",
++    constraint_setting = "@zephyr//boards:board_name",
++)
++
++cc_library(
++    name = "hal_soc_headers_library",
++    deps = [
++        "@hal_nordic//:dt_interface",
++        "@zephyr//modules/hal_nordic/nrfx:nrfx_hdrs",
++    ],
++)
++
++zephyr_runner_config(
++    name = "nrf52840_runner",
++    args = [
++        "--device=nRF52840_xxAA",
++        "--speed=4000",
++    ],
++    runner = "jlink",
++)
++
++filegroup(
++    name = "xiao_ble_extra_srcs",
++    srcs = ["@zephyr//:empty_files"],
++)
++
++platform(
++    name = "nrf52840",
++    constraint_values = [
++        ":seeed_xiao_ble",
++        "@platforms//cpu:armv7e-m",
++        "@zephyr//constraints/arm:cortex-m4",
++        "//boards:hw",
++    ],
++    flags = flags_from_dict({
++        "@zephyr//:board_runner_config": "@zephyr//boards/seeed/xiao_ble:nrf52840_runner",
++        "@zephyr//:dts_cc_library": "@zephyr//boards/seeed/xiao_ble:devicetree_generated",
++        "@zephyr//:hal_soc_extra_srcs": "@zephyr//boards/seeed/xiao_ble:xiao_ble_extra_srcs",
++        "@zephyr//:hal_soc_headers_library": "@zephyr//boards/seeed/xiao_ble:hal_soc_headers_library",
++        "@zephyr//:soc": "@zephyr//soc/nordic/nrf52",
++    }),
++    parents = ["@zephyr//platforms:cortex_m"],
++)
++
++# Sense variant (xiao_ble/nrf52840/sense) — the target Cantil builds for. The
++# transition's resolve_board_id maps this platform's name "nrf52840_sense" to
++# board_id "xiao_ble/nrf52840/sense" (underscore-joined qualifiers), so
++# BOARD_QUALIFIERS="nrf52840/sense" and the app's boards/*_sense.conf and
++# _sense.overlay are picked up. The base :nrf52840 platform above resolves to
++# the plain "xiao_ble/nrf52840" board and is kept for the smoke test. Both use
++# the same devicetree_generated (built from the sense .dts).
++platform(
++    name = "nrf52840_sense",
++    constraint_values = [
++        ":seeed_xiao_ble",
++        "@platforms//cpu:armv7e-m",
++        "@zephyr//constraints/arm:cortex-m4",
++        "//boards:hw",
++    ],
++    flags = flags_from_dict({
++        "@zephyr//:board_runner_config": "@zephyr//boards/seeed/xiao_ble:nrf52840_runner",
++        "@zephyr//:dts_cc_library": "@zephyr//boards/seeed/xiao_ble:devicetree_generated",
++        "@zephyr//:hal_soc_extra_srcs": "@zephyr//boards/seeed/xiao_ble:xiao_ble_extra_srcs",
++        "@zephyr//:hal_soc_headers_library": "@zephyr//boards/seeed/xiao_ble:hal_soc_headers_library",
++        "@zephyr//:soc": "@zephyr//soc/nordic/nrf52",
++    }),
++    parents = ["@zephyr//platforms:cortex_m"],
++)
++
++alias(
++    name = "xiao_ble",
++    actual = ":nrf52840",
++)
+diff --git a/bazel_overlay/cc.bzl b/bazel_overlay/cc.bzl
+index a2ea256..beb2ce8 100644
+--- a/bazel_overlay/cc.bzl
++++ b/bazel_overlay/cc.bzl
+@@ -652,6 +652,59 @@ def _zephyr_cc_binary(*, name, deps = [], **kwargs):
+         **kwargs
+     )
+ 
++# UF2 packaging — the Bazel equivalent of Zephyr CMake's CONFIG_BUILD_OUTPUT_UF2
++# post-build step. Boards whose only routine flashing route is a UF2 bootloader
++# (Adafruit nRF52 / RP2040 mass-storage bootloaders) otherwise produce no
++# flashable artifact from a Bazel build at all.
++#
++# Like _zephyr_app_elf, this carries the platform transition: the hex it
++# converts must be built in the app's own configuration, and the toolchain that
++# produces it only resolves inside that configuration.
++def _zephyr_app_uf2_impl(ctx):
++    hex_files = ctx.attr.hex[DefaultInfo].files.to_list()
++    if not hex_files:
++        fail("Hex target %s produced no files" % ctx.attr.hex.label)
++
++    out_file = ctx.actions.declare_file(ctx.label.name)
++
++    ctx.actions.run(
++        outputs = [out_file],
++        inputs = [hex_files[0]],
++        executable = ctx.executable._uf2conv,
++        # uf2conv reads .bin (with -b <base>) or .hex, where the load addresses
++        # come from the records themselves — hence no base address here.
++        arguments = [
++            "-c",
++            "-f",
++            ctx.attr.family,
++            "-o",
++            out_file.path,
++            hex_files[0].path,
++        ],
++        mnemonic = "Uf2Conv",
++        progress_message = "Packaging %s as UF2" % ctx.label.name,
++    )
++
++    return [DefaultInfo(files = depset([out_file]))]
++
++_zephyr_app_uf2 = rule(
++    implementation = _zephyr_app_uf2_impl,
++    attrs = {
++        "app_label": attr.string(mandatory = True),
++        "family": attr.string(mandatory = True),
++        "hex": attr.label(mandatory = True, cfg = "target"),
++        "_uf2conv": attr.label(
++            default = Label("//scripts/build:uf2conv"),
++            executable = True,
++            cfg = "exec",
++        ),
++        "_allowlist_function_transition": attr.label(
++            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
++        ),
++    },
++    cfg = zephyr_transition,
++)
++
+ def _zephyr_app_impl(ctx):
+     # The transition has been applied to this target.
+     # We depend on the actual binary, which will now be built in the transitioned configuration.
+@@ -769,13 +822,15 @@ _zephyr_app_elf = rule(
+     cfg = zephyr_transition,
+ )
+ 
+-def zephyr_app(*, name, app_label = None, **kwargs):
++def zephyr_app(*, name, app_label = None, uf2_family = None, **kwargs):
+     """
+     A macro that creates a Zephyr application with platform transition.
+ 
+     Args:
+         name: The name of the final application target.
+         app_label: The label of the application (e.g. //src/main). Defaults to the current package.
++        uf2_family: UF2 family id (e.g. "0xada52840"). When set, also emits
++            <name>.uf2 — the equivalent of CONFIG_BUILD_OUTPUT_UF2 in CMake.
+         **kwargs: Arguments to pass to _zephyr_cc_binary.
+     """
+     if not app_label:
+@@ -822,6 +877,15 @@ def zephyr_app(*, name, app_label = None, **kwargs):
+         testonly = kwargs.get("testonly", False),
+     )
+ 
++    if uf2_family:
++        _zephyr_app_uf2(
++            name = name + ".uf2",
++            app_label = app_label,
++            family = uf2_family,
++            hex = ":" + hex_target,
++            testonly = kwargs.get("testonly", False),
++        )
++
+     copy_file(
+         name = name + "_copy_config",
+         src = "@zephyr//:kconfig_config_file",
+diff --git a/bazel_overlay/lib/BUILD.bazel b/bazel_overlay/lib/BUILD.bazel
+index e26eea2..7dd5dea 100644
+--- a/bazel_overlay/lib/BUILD.bazel
++++ b/bazel_overlay/lib/BUILD.bazel
+@@ -21,6 +21,7 @@ cc_library(
+     deps = [
+         "//lib/heap",
+         "//lib/libc",
++        "//lib/net_buf",
+         "//lib/os",
+         "//lib/utils",
+     ] + select({
+diff --git a/bazel_overlay/modules/littlefs/BUILD.bazel b/bazel_overlay/modules/littlefs/BUILD.bazel
+new file mode 100644
+index 0000000..b7a61ef
+--- /dev/null
++++ b/bazel_overlay/modules/littlefs/BUILD.bazel
+@@ -0,0 +1,28 @@
++# SPDX-License-Identifier: Apache-2.0
++#
++# Zephyr in-tree glue for littlefs, exposed to the Cantil Bazel build
++# (docs/roadmap/bazel-migration.md). This dir (@zephyr//modules/littlefs) holds
++# the Zephyr-side half of littlefs — zephyr_lfs_config.h (the LFS_CONFIG header)
++# and zephyr_lfs_crc.c — while the portable library (lfs.c/lfs_util.c) is the
++# external @littlefs repo. zephyr-bazel's converter does not generate a BUILD
++# here, so this overlay adds one. //firmware:littlefs consumes both halves.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++# The LFS_CONFIG header. Provides the include path and the define that lfs.h /
++# lfs_util.h expand, so any target compiling littlefs sources depends on this.
++cc_library(
++    name = "lfs_config",
++    hdrs = ["zephyr_lfs_config.h"],
++    defines = ["LFS_CONFIG=zephyr_lfs_config.h"],
++    includes = ["."],
++    # Header-only Zephyr target (log.h, __assert.h) rather than the @zephyr
++    # umbrella — subsys/fs depends on this, and the umbrella would cycle.
++    deps = ["@zephyr//include:zephyr"],
++)
++
++# Zephyr's CRC glue (zephyr_lfs_crc.c), compiled by //firmware:littlefs which
++# supplies lfs_util.h (from @littlefs) and :lfs_config on the include path.
++exports_files(["zephyr_lfs_crc.c"])
+diff --git a/bazel_overlay/modules/segger/BUILD.bazel b/bazel_overlay/modules/segger/BUILD.bazel
+new file mode 100644
+index 0000000..cedde71
+--- /dev/null
++++ b/bazel_overlay/modules/segger/BUILD.bazel
+@@ -0,0 +1,14 @@
++# SPDX-License-Identifier: Apache-2.0
++#
++# Zephyr in-tree glue for SEGGER RTT, exposed to the Cantil Bazel build
++# (docs/roadmap/bazel-migration.md). This dir (@zephyr//modules/segger) holds
++# SEGGER_RTT_zephyr.c (the Zephyr port of RTT) plus the module Kconfig; the RTT
++# implementation itself (SEGGER/SEGGER_RTT.c) is the external @segger repo.
++# zephyr-bazel's converter does not generate a BUILD here, so this overlay adds
++# one. //firmware:segger compiles both halves.
++
++package(default_visibility = ["//visibility:public"])
++
++# Zephyr's RTT port glue, compiled by //firmware:segger which supplies
++# SEGGER_RTT.h (from @segger) on the include path.
++exports_files(["SEGGER_RTT_zephyr.c"])
+diff --git a/bazel_overlay/scripts/build/BUILD.bazel b/bazel_overlay/scripts/build/BUILD.bazel
+index 8051171..1b4a138 100644
+--- a/bazel_overlay/scripts/build/BUILD.bazel
++++ b/bazel_overlay/scripts/build/BUILD.bazel
+@@ -88,3 +88,17 @@ py_binary(
+     srcs = ["gen_app_partitions.py"],
+     deps = ["@zephyr_bazel_pip_deps//pyelftools"],
+ )
++
++# Zephyr's UF2 packager. CMake runs this as a post-build step when
++# CONFIG_BUILD_OUTPUT_UF2=y (Zephyr's CMakeLists.txt), which the Bazel build
++# has no equivalent for — so boards whose only flashing route is a UF2
++# bootloader (Adafruit nRF52 bootloader, RP2040, …) produce no flashable
++# artifact at all. Exposing the script lets an app package add its own UF2
++# rule. It reads .bin (with -b <base>) or .hex (addresses come from the
++# records).
++py_binary(
++    name = "uf2conv",
++    srcs = ["uf2conv.py"],
++    # The script loads the family table from a JSON file next to itself.
++    data = ["uf2families.json"],
++)
+diff --git a/modules/hal_nordic.BUILD b/modules/hal_nordic.BUILD
+index 182eca4..12174ef 100644
+--- a/modules/hal_nordic.BUILD
++++ b/modules/hal_nordic.BUILD
+@@ -12,8 +12,16 @@
+ # License for the specific language governing permissions and limitations under
+ # the License.
+ 
++load("@bazel_skylib//lib:selects.bzl", "selects")
+ load("@rules_cc//cc:defs.bzl", "cc_library")
+-load("@zephyr//:cc.bzl", "zephyr_module")
++load("@zephyr//:cc.bzl", "zephyr_cc_library", "zephyr_module")
++
++# nrfx peripheral drivers, each gated on its CONFIG_NRFX_* symbol — mirrors the
++# zephyr_library_sources_ifdef list in modules/hal_nordic/nrfx/CMakeLists.txt.
++# The base nrfx_driver_srcs filegroup below only carries the always-on clock /
++# gpiote / helper sources (enough for a minimal image); real applications pull
++# in flash (NVMC), I2C (TWI/TWIM), PWM, QSPI, UARTE, SPI(M) etc. Cantil.
++# (BUILD files cannot define functions, so each gate is an explicit select.)
+ 
+ package(default_visibility = ["//visibility:public"])
+ 
+@@ -27,6 +35,9 @@ cc_library(
+     hdrs = glob(["nrfx/**/*.h"]),
+     defines = select({
+         "@zephyr_kconfig//:CONFIG_SOC_COMPATIBLE_NRF52833=true": ["NRF52833_XXAA"],
++        # nRF52840 has no per-part SOC_COMPATIBLE_* symbol; SOC_NRF52840 is the
++        # one selected by the QIAA/QFAA part (soc/nordic/nrf52/Kconfig.soc).
++        "@zephyr_kconfig//:CONFIG_SOC_NRF52840=true": ["NRF52840_XXAA"],
+         "//conditions:default": [],
+     }),
+     includes = [
+@@ -53,6 +64,59 @@ filegroup(
+     ],
+ )
+ 
++# nrfx_twi_twim.c is shared by the TWI and TWIM drivers; gate it on either so
++# it is compiled exactly once when I2C is enabled.
++selects.config_setting_group(
++    name = "nrfx_twi_or_twim",
++    match_any = [
++        "@zephyr_kconfig//:CONFIG_NRFX_TWI=true",
++        "@zephyr_kconfig//:CONFIG_NRFX_TWIM=true",
++    ],
++)
++
++# Peripheral drivers beyond the always-on set, each behind its CONFIG_NRFX_*.
++zephyr_cc_library(
++    name = "nrfx_peripheral_drivers",
++    srcs = select({
++        "@zephyr_kconfig//:CONFIG_NRFX_NVMC=true": ["nrfx/drivers/src/nrfx_nvmc.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_POWER=true": ["nrfx/drivers/src/nrfx_power.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_PWM=true": ["nrfx/drivers/src/nrfx_pwm.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_QSPI=true": ["nrfx/drivers/src/nrfx_qspi.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_SPI=true": ["nrfx/drivers/src/nrfx_spi.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_SPIM=true": ["nrfx/drivers/src/nrfx_spim.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_TWI=true": ["nrfx/drivers/src/nrfx_twi.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_TWIM=true": ["nrfx/drivers/src/nrfx_twim.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_TWIS=true": ["nrfx/drivers/src/nrfx_twis.c"],
++        "//conditions:default": [],
++    }) + select({
++        "@zephyr_kconfig//:CONFIG_NRFX_UARTE=true": ["nrfx/drivers/src/nrfx_uarte.c"],
++        "//conditions:default": [],
++    }) + select({
++        ":nrfx_twi_or_twim": ["nrfx/drivers/src/nrfx_twi_twim.c"],
++        "//conditions:default": [],
++    }),
++    deps = [
++        ":dt_interface",
++        "@zephyr//modules/hal_nordic/nrfx:nrfx_hdrs",
++    ],
++)
++
+ zephyr_module(
+     name = "hal_nordic",
+     srcs = [
+@@ -62,6 +126,7 @@ zephyr_module(
+     config = "CONFIG_HAS_NRFX",
+     deps = [
+         ":dt_interface",
++        ":nrfx_peripheral_drivers",
+         "@zephyr//modules/hal_nordic/nrfx:nrfx_hdrs",
+     ],
+ )
+diff --git a/modules/littlefs.BUILD b/modules/littlefs.BUILD
+new file mode 100644
+index 0000000..06aa8c2
+--- /dev/null
++++ b/modules/littlefs.BUILD
+@@ -0,0 +1,32 @@
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++# littlefs (external library half) for the Cantil firmware Bazel build
++# (docs/roadmap/bazel-migration.md, Phase 3). Overlaid onto the fetched
++# zephyrproject-rtos/littlefs checkout via new_git_repository in MODULE.bazel.
++#
++# littlefs has a two-part structure: the portable library (lfs.c/lfs_util.c,
++# here) and Zephyr's in-tree glue (zephyr_lfs_crc.c + zephyr_lfs_config.h under
++# @zephyr//modules/littlefs, exposed by the bazel_overlay/modules/littlefs
++# BUILD). //firmware:littlefs stitches the two together, since the glue needs
++# this library's lfs_util.h and the LFS_CONFIG define ties them.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_library(
++    name = "headers",
++    hdrs = [
++        "lfs.h",
++        "lfs_util.h",
++    ],
++    includes = ["."],
++)
++
++filegroup(
++    name = "srcs",
++    srcs = [
++        "lfs.c",
++        "lfs_util.c",
++    ],
++)
+diff --git a/modules/segger.BUILD b/modules/segger.BUILD
+new file mode 100644
+index 0000000..e89970e
+--- /dev/null
++++ b/modules/segger.BUILD
+@@ -0,0 +1,34 @@
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++# SEGGER RTT (external library half) for the Cantil firmware Bazel build
++# (docs/roadmap/bazel-migration.md, Phase 3). Overlaid onto the fetched
++# zephyrproject-rtos/segger checkout via new_git_repository in MODULE.bazel.
++#
++# Like littlefs, segger is two-part: the SEGGER RTT sources (SEGGER/, here) and
++# Zephyr's glue (SEGGER_RTT_zephyr.c under @zephyr//modules/segger, exposed by
++# the bazel_overlay/modules/segger BUILD). //firmware:segger compiles both.
++# Only the RTT path is wired (CONFIG_USE_SEGGER_RTT); SystemView / DebugMon are
++# not used by Cantil.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_library(
++    name = "headers",
++    hdrs = glob([
++        "SEGGER/*.h",
++        "Config/*.h",
++    ]),
++    includes = [
++        "SEGGER",
++        "Config",
++    ],
++)
++
++filegroup(
++    name = "srcs",
++    srcs = [
++        "SEGGER/SEGGER_RTT.c",
++    ],
++)
+diff --git a/modules/wolfssl.BUILD b/modules/wolfssl.BUILD
+new file mode 100644
+index 0000000..c057c98
+--- /dev/null
++++ b/modules/wolfssl.BUILD
+@@ -0,0 +1,174 @@
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++# wolfSSL (wolfCrypt) for the Cantil firmware Bazel build
++# (docs/roadmap/bazel-migration.md, Phase 3). Overlaid onto the fetched wolfSSL
++# checkout via new_git_repository(build_file=...) in the Cantil MODULE.bazel.
++#
++# This is a *config-only* module from zephyr-bazel's point of view: there is no
++# `zephyr_module` target here, so discovery sources wolfSSL's Kconfig (for
++# CONFIG_WOLFSSL / WOLFSSL_BUILTIN / WOLFSSL_SETTINGS_FILE) but does NOT
++# auto-link its sources. The sources are compiled by //firmware:wolfssl, which
++# is where firmware/include (the cantil_wolfssl_user_settings.h that
++# CONFIG_WOLFSSL_SETTINGS_FILE names) is on the include path.
++#
++# The source list mirrors modules/crypto/wolfssl/zephyr/CMakeLists.txt exactly
++# (no glob — that CMakeLists enumerates every file, and several *.c under
++# wolfcrypt/src are #included rather than compiled). The FIPS, ARMASM and
++# INTELASM conditionals are all off for nRF52840 (WOLFCRYPT_ONLY, sp_cortexm.c
++# C-path), so their sources are omitted here.
++
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++# All wolfSSL / wolfCrypt public + internal headers. `includes` are the three
++# roots wolfSSL sources use: the module root (for "wolfssl/..." and
++# "wolfcrypt/..."), and zephyr/ (for the Zephyr port glue headers).
++cc_library(
++    name = "headers",
++    hdrs = glob([
++        "wolfssl/**/*.h",
++        "wolfcrypt/**/*.h",
++        "zephyr/**/*.h",
++    ]),
++    # wolfSSL amalgamates: many compiled units #include sibling .c/.i files by
++    # repo-relative path (ssl.c -> "src/ssl_misc.c"; tfm.c/sp_int.c -> *.i;
++    # several wolfcrypt units -> "misc.c"). Those are not compiled on their own
++    # (not in :srcs) but must be staged as textual inputs so the sandbox has
++    # them. Declaring them here makes them available to every wolfSSL compile.
++    textual_hdrs = glob(
++        [
++            "src/**/*.c",
++            "src/**/*.i",
++            "wolfcrypt/src/**/*.c",
++            "wolfcrypt/src/**/*.i",
++        ],
++        allow_empty = True,
++    ),
++    includes = [
++        ".",
++        "zephyr",
++    ],
++)
++
++# TLS/SSL layer (src/). Under WOLFCRYPT_ONLY these compile to essentially empty
++# translation units, but they are kept to match the reference CMake build.
++_SSL_SRCS = [
++    "src/crl.c",
++    "src/dtls.c",
++    "src/dtls13.c",
++    "src/internal.c",
++    "src/keys.c",
++    "src/ocsp.c",
++    "src/sniffer.c",
++    "src/ssl.c",
++    "src/tls.c",
++    "src/tls13.c",
++    "src/wolfio.c",
++]
++
++# wolfCrypt (wolfcrypt/src/). Excludes async.c, misc.c, selftest.c — those are
++# #included by other units, not compiled directly. FIPS / ARMASM / INTELASM
++# sources are omitted (those CONFIG_* are off for this target).
++_WOLFCRYPT_SRCS = [
++    "wolfcrypt/src/hmac.c",
++    "wolfcrypt/src/random.c",
++    "wolfcrypt/src/kdf.c",
++    "wolfcrypt/src/rsa.c",
++    "wolfcrypt/src/ecc.c",
++    "wolfcrypt/src/aes.c",
++    "wolfcrypt/src/sha.c",
++    "wolfcrypt/src/sha256.c",
++    "wolfcrypt/src/sha512.c",
++    "wolfcrypt/src/sha3.c",
++    "wolfcrypt/src/dh.c",
++    "wolfcrypt/src/cmac.c",
++    "wolfcrypt/src/arc4.c",
++    "wolfcrypt/src/asm.c",
++    "wolfcrypt/src/asn.c",
++    "wolfcrypt/src/blake2b.c",
++    "wolfcrypt/src/blake2s.c",
++    "wolfcrypt/src/camellia.c",
++    "wolfcrypt/src/chacha.c",
++    "wolfcrypt/src/chacha20_poly1305.c",
++    "wolfcrypt/src/coding.c",
++    "wolfcrypt/src/compress.c",
++    "wolfcrypt/src/cpuid.c",
++    "wolfcrypt/src/cryptocb.c",
++    "wolfcrypt/src/curve25519.c",
++    "wolfcrypt/src/curve448.c",
++    "wolfcrypt/src/des3.c",
++    "wolfcrypt/src/wc_mldsa.c",
++    "wolfcrypt/src/dsa.c",
++    "wolfcrypt/src/ecc_fp.c",
++    "wolfcrypt/src/eccsi.c",
++    "wolfcrypt/src/ed25519.c",
++    "wolfcrypt/src/ed448.c",
++    "wolfcrypt/src/error.c",
++    "wolfcrypt/src/falcon.c",
++    "wolfcrypt/src/fe_448.c",
++    "wolfcrypt/src/fe_low_mem.c",
++    "wolfcrypt/src/fe_operations.c",
++    "wolfcrypt/src/ge_448.c",
++    "wolfcrypt/src/ge_low_mem.c",
++    "wolfcrypt/src/ge_operations.c",
++    "wolfcrypt/src/hash.c",
++    "wolfcrypt/src/integer.c",
++    "wolfcrypt/src/logging.c",
++    "wolfcrypt/src/md2.c",
++    "wolfcrypt/src/md4.c",
++    "wolfcrypt/src/md5.c",
++    "wolfcrypt/src/memory.c",
++    "wolfcrypt/src/pkcs12.c",
++    "wolfcrypt/src/pkcs7.c",
++    "wolfcrypt/src/poly1305.c",
++    "wolfcrypt/src/pwdbased.c",
++    "wolfcrypt/src/ripemd.c",
++    "wolfcrypt/src/sakke.c",
++    "wolfcrypt/src/signature.c",
++    "wolfcrypt/src/siphash.c",
++    "wolfcrypt/src/sp_arm32.c",
++    "wolfcrypt/src/sp_arm64.c",
++    "wolfcrypt/src/sp_armthumb.c",
++    "wolfcrypt/src/sp_c32.c",
++    "wolfcrypt/src/sp_c64.c",
++    "wolfcrypt/src/sp_cortexm.c",
++    "wolfcrypt/src/sp_dsp32.c",
++    "wolfcrypt/src/sp_int.c",
++    "wolfcrypt/src/sp_x86_64.c",
++    "wolfcrypt/src/srp.c",
++    "wolfcrypt/src/tfm.c",
++    "wolfcrypt/src/wc_dsp.c",
++    "wolfcrypt/src/wc_encrypt.c",
++    "wolfcrypt/src/wc_mlkem.c",
++    "wolfcrypt/src/wc_mlkem_poly.c",
++    "wolfcrypt/src/wc_lms.c",
++    "wolfcrypt/src/wc_lms_impl.c",
++    "wolfcrypt/src/wc_pkcs11.c",
++    "wolfcrypt/src/wc_port.c",
++    "wolfcrypt/src/wc_slhdsa.c",
++    "wolfcrypt/src/wolfevent.c",
++    "wolfcrypt/src/wolfmath.c",
++    "wolfcrypt/src/port/liboqs/liboqs.c",
++    "wolfcrypt/src/port/psa/psa.c",
++    "wolfcrypt/src/port/psa/psa_aes.c",
++    "wolfcrypt/src/port/psa/psa_hash.c",
++    "wolfcrypt/src/port/psa/psa_pkcbs.c",
++    "wolfcrypt/src/port/st/stm32.c",
++]
++
++filegroup(
++    name = "srcs",
++    srcs = _SSL_SRCS + _WOLFCRYPT_SRCS + ["zephyr/zephyr_init.c"],
++)
++
++# Sources that are #included, not compiled — exported so a compiling target can
++# depend on them as inputs without adding them to srcs.
++filegroup(
++    name = "included_srcs",
++    srcs = [
++        "wolfcrypt/src/async.c",
++        "wolfcrypt/src/misc.c",
++        "wolfcrypt/src/selftest.c",
++    ],
++)
+diff --git a/scripts/build/kconfig_gen_symbols.py b/scripts/build/kconfig_gen_symbols.py
+index 7081292..54cbf49 100644
+--- a/scripts/build/kconfig_gen_symbols.py
++++ b/scripts/build/kconfig_gen_symbols.py
+@@ -40,6 +40,11 @@ def parse_args():
+     parser.add_argument("--modules", nargs="+", default=[])
+     parser.add_argument("--board-dirs", nargs="+", default=[])
+     parser.add_argument("--oot-dts-roots", nargs="+", default=[])
++    # Application source dirs. Zephyr apps may define their own Kconfig symbols
++    # (an <app>/Kconfig that sources Kconfig.zephyr); those symbols must appear
++    # in the global schema so the per-app platform can set their flags. Without
++    # this the app's CONFIG_* flags do not exist and analysis fails.
++    parser.add_argument("--app-dirs", nargs="+", default=[])
+     parser.add_argument("--output", required=True)
+     parser.add_argument("--jobs", "-j", type=int, default=None, help="Number of parallel processes to use for parsing")
+     return parser.parse_args()
+@@ -401,9 +406,9 @@ def parse_kconfig_authoritative(
+                 symbols[name] = stype
+ 
+ 
+-def scan_files_for_dynamic_symbols(zephyr_base, board_dirs, modules, symbols):
++def scan_files_for_dynamic_symbols(zephyr_base, board_dirs, modules, symbols, app_dirs=()):
+     """Scans files for symbols that might not be visible in the static Kconfig tree."""
+-    search_dirs = [zephyr_base] + list(board_dirs) + list(modules)
++    search_dirs = [zephyr_base] + list(board_dirs) + list(modules) + list(app_dirs)
+     for d in search_dirs:
+         if not os.path.isdir(d):
+             continue
+@@ -555,6 +560,11 @@ def main():
+ 
+     # 3. Authoritative Parse using kconfiglib (parallelized)
+     all_warnings = []
++    # App dirs are treated as out-of-tree DTS roots so their devicetree
++    # bindings produce CONFIG_DT_HAS_<compat>_ENABLED symbols in the global
++    # schema — otherwise a node using a custom compatible in the app overlay
++    # makes the per-app platform reference a flag that does not exist. Cantil.
++    dts_roots_with_app = list(args.oot_dts_roots) + list(args.app_dirs)
+     parse_kconfig_authoritative(
+         zephyr_base,
+         tmp_dir,
+@@ -562,7 +572,7 @@ def main():
+         args.modules,
+         soc_dirs,
+         board_dirs,
+-        args.oot_dts_roots,
++        dts_roots_with_app,
+         symbols,
+         all_warnings,
+         jobs=args.jobs,
+@@ -580,7 +590,7 @@ def main():
+             f.write("/* No Kconfig warnings */\n")
+ 
+     # 4. Fallback: Scan files for dynamic symbols
+-    scan_files_for_dynamic_symbols(zephyr_base, args.board_dirs, args.modules, symbols)
++    scan_files_for_dynamic_symbols(zephyr_base, args.board_dirs, args.modules, symbols, args.app_dirs)
+ 
+     # 5. Generate BUILD.bazel
+     write_bazel_build_file(args.output, symbols)
+diff --git a/scripts/build/kconfig_gen_values.py b/scripts/build/kconfig_gen_values.py
+index 5bdb787..b05a98d 100644
+--- a/scripts/build/kconfig_gen_values.py
++++ b/scripts/build/kconfig_gen_values.py
+@@ -227,7 +227,11 @@ def preprocess_dts(args, zephyr_base, output_dir, board_dir):
+         dts_input_path,
+     ]
+ 
+-    raw_roots = [Path(r) for r in args.oot_dts_roots] + [Path(m) for m in args.modules] + [Path(zephyr_base)]
++    # Include the application dir as a DTS root (Zephyr's DTS_ROOT=<app>): the
++    # app may ship its own devicetree bindings (e.g. firmware/dts/bindings) that
++    # nodes in its overlay use. Without this, custom-compatible nodes parse but
++    # their typed properties (gpios, etc.) get no generated macros. Cantil.
++    raw_roots = [Path(args.app_dir)] + [Path(r) for r in args.oot_dts_roots] + [Path(m) for m in args.modules] + [Path(zephyr_base)]
+     dts_roots = []
+     for r in raw_roots:
+         if r not in dts_roots:
+@@ -529,13 +533,21 @@ def main():
+     env = os.environ.copy()
+     env["KCONFIG_BOARD_DIR"] = os.path.abspath(board_dir)
+ 
++    # Root Kconfig: Zephyr's KCONFIG_ROOT convention makes the application's own
++    # <app_dir>/Kconfig the tree root when it exists (it defines the app symbols,
++    # then `source "Kconfig.zephyr"` pulls in the rest, resolved against
++    # $srctree=$ZEPHYR_BASE). Without this the app's CONFIG_* symbols are
++    # undefined. Falls back to Zephyr's root when the app has no Kconfig.
++    app_kconfig = os.path.join(args.app_dir, "Kconfig")
++    root_kconfig = app_kconfig if os.path.exists(app_kconfig) else os.path.join(zephyr_base, "Kconfig")
++
+     # Call the definitive Zephyr's kconfig.py
+     kconfig_py = os.path.join(zephyr_base, "scripts", "kconfig", "kconfig.py")
+     cmd = [
+         sys.executable,
+         kconfig_py,
+         "--handwritten-input-configs",
+-        os.path.join(zephyr_base, "Kconfig"),
++        root_kconfig,
+         os.path.join(output_dir, ".config"),
+         os.path.join(output_dir, "zephyr", "autoconf.h"),
+         os.path.join(output_dir, "kconfig_list.txt"),
+@@ -555,7 +567,7 @@ def main():
+ 
+     # Load final cleanly resolved config
+     import kconfiglib
+-    kconf = kconfiglib.Kconfig(os.path.join(zephyr_base, "Kconfig"))
++    kconf = kconfiglib.Kconfig(root_kconfig)
+     kconf.load_config(os.path.join(output_dir, ".config"))
+ 
+     generate_config_c(kconf, output_dir, args)
+diff --git a/third_party/zephyr/drivers/entropy/BUILD.bazel b/third_party/zephyr/drivers/entropy/BUILD.bazel
+index fa351a8..b1c5179 100644
+--- a/third_party/zephyr/drivers/entropy/BUILD.bazel
++++ b/third_party/zephyr/drivers/entropy/BUILD.bazel
+@@ -4,6 +4,7 @@
+ # in zephyr-bazel.
+ 
+ load("@bazel_skylib//lib:selects.bzl", "selects")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load("//:cc.bzl", "zephyr_cc_library")
+ 
+ package(default_visibility = ["//:__subpackages__"])
+@@ -230,3 +231,22 @@ filegroup(
+         "//include:zephyr/drivers/entropy.h",
+     ],
+ )
++
++# ── Cantil addition ─────────────────────────────────────────────────────────
++# The native ("bottom") half of the native_sim entropy driver. Zephyr's
++# CMakeLists adds it with target_sources(native_simulator INTERFACE ...), which
++# compiles it as runner-side host code — no Zephyr headers, NSI_RUNNER_BUILD.
++# The BUILD generator only translates the embedded half, so without this
++# entropy_native_seed() is undefined at link time. Pulled in by
++# //:native_simulator_bottom.
++cc_library(
++    name = "fake_entropy_native_bottom",
++    srcs = ["fake_entropy_native_bottom.c"],
++    copts = ["-Wno-error"],
++    target_compatible_with = select({
++        "@zephyr_kconfig//:CONFIG_ARCH_POSIX=true": [],
++        "//conditions:default": ["@platforms//:incompatible"],
++    }),
++    deps = ["//scripts/native_simulator:native_simulator_headers"],
++    alwayslink = True,
++)
+diff --git a/third_party/zephyr/drivers/flash/BUILD.bazel b/third_party/zephyr/drivers/flash/BUILD.bazel
+index 626c12e..d82b09b 100644
+--- a/third_party/zephyr/drivers/flash/BUILD.bazel
++++ b/third_party/zephyr/drivers/flash/BUILD.bazel
+@@ -4,6 +4,7 @@
+ # in zephyr-bazel.
+ 
+ load("@bazel_skylib//lib:selects.bzl", "selects")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load("//:cc.bzl", "zephyr_cc_library")
+ 
+ package(default_visibility = ["//:__subpackages__"])
+@@ -764,3 +765,20 @@ filegroup(
+         "//include:zephyr/drivers/flash/nrf_qspi_nor.h",
+     ],
+ )
++
++# ── Cantil addition ─────────────────────────────────────────────────────────
++# The native ("bottom") half of the flash simulator — same story as
++# drivers/entropy:fake_entropy_native_bottom. Without it flash_mock_init_native
++# / flash_mock_cleanup_native are undefined whenever a native_sim app mounts a
++# filesystem on the simulated flash. Pulled in by //:native_simulator_bottom.
++cc_library(
++    name = "flash_simulator_native",
++    srcs = ["flash_simulator_native.c"],
++    copts = ["-Wno-error"],
++    target_compatible_with = select({
++        "@zephyr_kconfig//:CONFIG_ARCH_POSIX=true": [],
++        "//conditions:default": ["@platforms//:incompatible"],
++    }),
++    deps = ["//scripts/native_simulator:native_simulator_headers"],
++    alwayslink = True,
++)
+diff --git a/third_party/zephyr/drivers/serial/BUILD.bazel b/third_party/zephyr/drivers/serial/BUILD.bazel
+index 830cfbd..10e167f 100644
+--- a/third_party/zephyr/drivers/serial/BUILD.bazel
++++ b/third_party/zephyr/drivers/serial/BUILD.bazel
+@@ -32,15 +32,13 @@ zephyr_cc_library(
+             "uart_shell.c",
+         ],
+     }) + select({
++        # Zephyr adds ${ZEPHYR_BASE}/misc/empty_file.c under these two symbols
++        # purely so the serial library is non-empty when only the CDC ACM class
++        # is enabled. The converter emitted the literal, unexpanded path (a
++        # non-existent Bazel source). Dropped: an empty translation unit adds
++        # nothing, and drivers/serial has real sources on this board anyway.
++        # (Cantil Bazel migration — docs/roadmap/bazel-migration.md.)
+         "//conditions:default": [],
+-        "@zephyr_kconfig//:CONFIG_USBD_CDC_ACM_CLASS=true": [
+-            "${ZEPHYR_BASE}/misc/empty_file.c",
+-        ],
+-    }) + select({
+-        "//conditions:default": [],
+-        "@zephyr_kconfig//:CONFIG_USB_CDC_ACM=true": [
+-            "${ZEPHYR_BASE}/misc/empty_file.c",
+-        ],
+     }) + select({
+         "//conditions:default": [],
+         "@zephyr_kconfig//:CONFIG_LEUART_GECKO=true": [
+diff --git a/third_party/zephyr/drivers/usb/common/nrf_usbd_common/BUILD.bazel b/third_party/zephyr/drivers/usb/common/nrf_usbd_common/BUILD.bazel
+index 66eeb3d..0ca7e11 100644
+--- a/third_party/zephyr/drivers/usb/common/nrf_usbd_common/BUILD.bazel
++++ b/third_party/zephyr/drivers/usb/common/nrf_usbd_common/BUILD.bazel
+@@ -16,6 +16,10 @@ zephyr_cc_library(
+         ["*.h"],
+         allow_empty = True,
+     ),
++    # Expose this dir so udc_nrf.c's `#include <nrf_usbd_common.h>` resolves.
++    # Zephyr's CMake does this via zephyr_include_directories; the converter
++    # dropped it. (Cantil Bazel migration — docs/roadmap/bazel-migration.md.)
++    includes = ["."],
+     deps = [
+     ] + select({
+         "@zephyr_kconfig//:CONFIG_NRF_USBD_COMMON=true": [":nrf_usbd_common_config_nrf_usbd_common_deps"],
+diff --git a/third_party/zephyr/drivers/usb/udc/BUILD.bazel b/third_party/zephyr/drivers/usb/udc/BUILD.bazel
+index 399d4f9..9ef39e6 100644
+--- a/third_party/zephyr/drivers/usb/udc/BUILD.bazel
++++ b/third_party/zephyr/drivers/usb/udc/BUILD.bazel
+@@ -117,4 +117,12 @@ zephyr_cc_library(
+         ["*.h"],
+         allow_empty = True,
+     ),
++    # udc_nrf.c includes <nrf_usbd_common.h>; the converter did not carry the
++    # dependency across. (Cantil Bazel migration — docs/roadmap/bazel-migration.md.)
++    deps = select({
++        "@zephyr_kconfig//:CONFIG_UDC_NRF=true": [
++            "//drivers/usb/common/nrf_usbd_common",
++        ],
++        "//conditions:default": [],
++    }),
+ )
+diff --git a/third_party/zephyr/lib/net_buf/BUILD.bazel b/third_party/zephyr/lib/net_buf/BUILD.bazel
+new file mode 100644
+index 0000000..c93f39d
+--- /dev/null
++++ b/third_party/zephyr/lib/net_buf/BUILD.bazel
+@@ -0,0 +1,21 @@
++# SPDX-License-Identifier: Apache-2.0
++#
++# Cantil Bazel migration (docs/roadmap/bazel-migration.md): the converter did
++# not generate a BUILD for lib/net_buf, so net_buf (buf.c / buf_simple.c) was
++# never compiled and the USB device_next stack failed to link with undefined
++# net_buf_* symbols. Mirrors lib/net_buf/CMakeLists.txt.
++
++load("//:cc.bzl", "zephyr_cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++zephyr_cc_library(
++    name = "net_buf",
++    srcs = select({
++        "@zephyr_kconfig//:CONFIG_NET_BUF=true": [
++            "buf.c",
++            "buf_simple.c",
++        ],
++        "//conditions:default": [],
++    }),
++)
+diff --git a/third_party/zephyr/subsys/fs/BUILD.bazel b/third_party/zephyr/subsys/fs/BUILD.bazel
+index 4e763a0..2498e0c 100644
+--- a/third_party/zephyr/subsys/fs/BUILD.bazel
++++ b/third_party/zephyr/subsys/fs/BUILD.bazel
+@@ -86,6 +86,17 @@ zephyr_cc_library(
+         ["*.h"],
+         allow_empty = True,
+     ),
++    # littlefs_fs.c includes <lfs.h>/<lfs_util.h> from the external littlefs
++    # repo (injected into @zephyr via MODULE.bazel), and needs the Zephyr glue's
++    # LFS_CONFIG define + zephyr_lfs_config.h (which registers the log module).
++    # Cantil Bazel migration.
++    deps = select({
++        "@zephyr_kconfig//:CONFIG_FILE_SYSTEM_LITTLEFS=true": [
++            "@littlefs//:headers",
++            "//modules/littlefs:lfs_config",
++        ],
++        "//conditions:default": [],
++    }),
+ )
+ 
+ zephyr_cc_library(
+diff --git a/third_party/zephyr/subsys/logging/backends/BUILD.bazel b/third_party/zephyr/subsys/logging/backends/BUILD.bazel
+index f629ff3..19a10cb 100644
+--- a/third_party/zephyr/subsys/logging/backends/BUILD.bazel
++++ b/third_party/zephyr/subsys/logging/backends/BUILD.bazel
+@@ -101,4 +101,12 @@ zephyr_cc_library(
+         ["*.h"],
+         allow_empty = True,
+     ),
++    # log_backend_rtt.c includes <SEGGER_RTT.h> from the external segger repo
++    # (injected into @zephyr via MODULE.bazel). Cantil Bazel migration.
++    deps = select({
++        "@zephyr_kconfig//:CONFIG_LOG_BACKEND_RTT=true": [
++            "@segger//:headers",
++        ],
++        "//conditions:default": [],
++    }),
+ )
+diff --git a/third_party/zephyr/subsys/usb/device_next/BUILD.bazel b/third_party/zephyr/subsys/usb/device_next/BUILD.bazel
+index 5a60597..0639d30 100644
+--- a/third_party/zephyr/subsys/usb/device_next/BUILD.bazel
++++ b/third_party/zephyr/subsys/usb/device_next/BUILD.bazel
+@@ -92,9 +92,15 @@ zephyr_cc_library(
+         ],
+     }),
+     hdrs = glob(
+-        ["*.h"],
++        [
++            "*.h",
++            "class/*.h",
++        ],
+         allow_empty = True,
+     ),
++    # class/*.c include private headers from the device_next package root
++    # (e.g. "usbd_msg.h"); expose it. Cantil Bazel migration.
++    includes = ["."],
+ )
+ 
+ zephyr_linker_fragment(

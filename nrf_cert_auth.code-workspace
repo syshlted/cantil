@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		// The VS Code Bazel extension spawns this instead of a bare `bazel`,
+		// which is either absent (flatpak VS Code) or the host's unpinned
+		// Bazel 9 (this tree pins 8.7.0). See scripts/bazelisk-shim.sh.
+		//
+		// Relative: the extension spawns with cwd = the Bazel workspace root
+		// and no shell, so this resolves there — and no absolute machine path
+		// has to be committed. It must live in *this* file, not just
+		// .vscode/settings.json: the extension reads its config unscoped
+		// (getConfiguration("bazel") with no resource), and when a
+		// .code-workspace is open, unscoped lookups skip folder settings.
+		"bazel.executable": "./scripts/bazelisk-shim.sh"
+	}
+}

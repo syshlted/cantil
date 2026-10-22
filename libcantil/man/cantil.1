@@ -1,0 +1,616 @@
+.TH CANTIL 1 "June 2026" "Cantil" "User Commands"
+.SH NAME
+cantil \- host client for the Cantil hardware certificate authority
+.SH SYNOPSIS
+.B cantil
+.B list
+.PP
+.B cantil
+.B pair
+[\fB\-\-force\fR]
+[\fB\-\-passkey\fR \fIdigits\fR]
+[\fB\-\-client\-cert\fR \fIfile\fR [\fB\-\-client\-chain\fR \fIfile\fR]]
+.I port
+.PP
+.B cantil
+.B status
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B random
+.I n
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B provision\-ca
+[\fB\-\-new\fR]
+\fB\-\-cn\fR \fIcn\fR
+[\fB\-\-o\fR \fIorg\fR]
+[\fB\-\-ou\fR \fIou\fR]
+[\fB\-\-c\fR \fIcc\fR]
+[\fB\-\-st\fR \fIstate\fR]
+[\fB\-\-l\fR \fIlocality\fR]
+[\fB\-\-validity\fR \fIdays\fR]
+[\fB\-\-path\-len\fR \fIn\fR]
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B sign\-key\-slot
+.I issuer_slot
+.I subject_slot
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B protect
+.I slot
+[\fB\-\-certs\fR]
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B unprotect
+.I slot
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B key\-chain
+.I slot
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B sign\-csr\-slot
+.I issuer_slot
+.I csr.der
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B session\-cert
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B session\-csr
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B ca\-cert
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B session\-sign
+.I issuer_slot
+[\fB\-\-force\fR]
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B session\-push
+.I cert.der
+[\fB\-\-chain\fR \fIchain.der\fR]
+[\fB\-\-force\fR]
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B clients
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B unpair
+.I hex\-pubkey
+[\fIopts\fR]
+.I port
+.PP
+.B cantil
+.B name
+.I hex\-pubkey
+.I name
+[\fIopts\fR]
+.I port
+
+.SH DESCRIPTION
+\fBcantil\fR manages a Cantil hardware certificate authority device over USB
+CDC/ACM (or BLE NUS via
+.B libcantil
+directly).
+All commands that take a
+.I port
+argument open an end-to-end encrypted
+Noise_XX_25519_ChaChaPoly_SHA256 session to the device.  No keys leave the
+device at any point.
+.PP
+Client identity keys are generated on first use and stored under
+.IR ${XDG_CONFIG_HOME:-$HOME/.config}/cantil/ .
+Run
+.B cantil pair
+on first contact with a new device to generate a client keypair and record the
+device fingerprint for subsequent Tier-2 verification.
+
+.SH COMMANDS
+.SS General
+.TP
+.B list
+Enumerate attached Cantil USB devices (VID:PID 0x1209:0x00CA) by walking
+.IR /sys/bus/usb/devices .
+Prints VID:PID, USB serial, protocol CDC/ACM port, and console CDC/ACM port for
+each device found.  Does not require a prior
+.BR pair .
+
+.SS First-time setup
+.TP
+\fBpair\fR [\fB\-\-force\fR] [\fB\-\-passkey\fR \fIdigits\fR] [\fB\-\-client\-cert\fR \fIfile\fR [\fB\-\-client\-chain\fR \fIfile\fR]] \fIport\fR
+Connect to the device at
+.I port
+using Trust-on-First-Use (Tier 1), record the device's static Noise public key
+and the session certificate fingerprint, and perform a tap-confirm handshake on
+the device.
+.RS
+.PP
+On first run a fresh Curve25519 client keypair is generated and saved to the
+key store.  The device's static public key, session certificate fingerprint, and
+FICR-derived CN are recorded for use as the default Tier-2 trust policy on all
+subsequent connections.
+.PP
+The device will blink cyan and wait for the owner to tap
+.B Orange-Orange
+(two taps, pause, two taps) to confirm the new bond.  The CLI blocks for up to
+25 seconds.
+.TP
+.B \-\-force
+Re-pair even when a device key is already stored; overwrites the existing bond.
+.TP
+\fB\-\-passkey\fR \fIdigits\fR
+Supply the 6-digit passkey shown by the device (Method 3 devices only).
+If omitted and the device expects a passkey, the CLI prompts interactively.
+.TP
+\fB\-\-client\-cert\fR \fIfile\fR
+DER-encoded client identity certificate (Method 4/5 CA-anchored devices).
+Saved to the key store for automatic use on subsequent connections.
+.TP
+\fB\-\-client\-chain\fR \fIfile\fR
+Optional DER chain file (concatenated intermediates) to accompany
+\fB\-\-client\-cert\fR.
+.RE
+
+.SS Device information
+.TP
+\fBstatus\fR [\fIopts\fR] \fIport\fR
+Print device state (LOCKED/UNLOCKED), firmware version, key slot usage, cert
+counts, flash free space, BLE bond count, external-flash presence, and the
+device key fingerprint.
+
+.TP
+\fBrandom\fR \fIn\fR [\fIopts\fR] \fIport\fR
+Read
+.I n
+bytes of hardware-TRNG randomness from the device and print them as hex.
+.I n
+must be between 1 and the compile-time limit (typically 256).
+
+.SS CA hierarchy setup
+.TP
+\fBprovision\-ca\fR [\fB\-\-new\fR] \fB\-\-cn\fR \fIcn\fR [\fIdn-opts\fR] [\fIopts\fR] \fIport\fR
+Provision a key slot as a CA by writing X.509 subject data to it
+.RB ( PUSH_KEY_X509 ,
+opcode 0x26).  Without
+.BR \-\-new ,
+targets slot 0 (the factory CA slot); with
+.BR \-\-new ,
+generates a fresh P-256 key in the next free slot.
+.RS
+.TP
+.B \-\-new
+Generate a fresh key in the next free slot instead of using slot 0.
+.TP
+\fB\-\-cn\fR \fIcn\fR
+Subject Common Name (required).
+.TP
+\fB\-\-o\fR \fIorg\fR
+Subject Organisation.
+.TP
+\fB\-\-ou\fR \fIou\fR
+Subject Organisational Unit.
+.TP
+\fB\-\-c\fR \fIcc\fR
+Subject Country (2-letter ISO 3166-1 alpha-2).
+.TP
+\fB\-\-st\fR \fIstate\fR
+Subject State or Province.
+.TP
+\fB\-\-l\fR \fIlocality\fR
+Subject Locality.
+.TP
+\fB\-\-validity\fR \fIdays\fR
+Certificate validity period in days (default: 3650).
+.TP
+\fB\-\-path\-len\fR \fIn\fR
+Basic Constraints pathLenConstraint (\-1 = unconstrained, 0 = leaf-only CA,
+n = up to n subordinate CAs below).
+.RE
+
+.TP
+\fBsign\-key\-slot\fR \fIissuer_slot\fR \fIsubject_slot\fR [\fIopts\fR] \fIport\fR
+Sign the certificate for
+.I subject_slot
+using the CA key in
+.IR issuer_slot ,
+entirely on-device
+.RB ( SIGN_KEY_SLOT ,
+opcode 0x25).  Both slots must exist; the device must be UNLOCKED.
+
+.TP
+\fBprotect\fR \fIslot\fR [\fB\-\-certs\fR] [\fIopts\fR] \fIport\fR
+Mark
+.I slot
+as protected
+.RB ( PROTECT_SLOT ,
+opcode 0x28).  Protected slots cannot be overwritten or deleted.
+Requires a tap-confirm gesture on the device (Purple \(mu 3).
+.RS
+.TP
+.B \-\-certs
+Also protect all existing and future certificates issued by this slot against
+manual revocation.
+.RE
+
+.TP
+\fBunprotect\fR \fIslot\fR [\fIopts\fR] \fIport\fR
+Remove the protection flag from
+.I slot
+.RB ( UNPROTECT_SLOT ,
+opcode 0x29).  Requires a tap-confirm gesture on the device (Purple \(mu 3).
+
+.TP
+\fBkey\-chain\fR \fIslot\fR [\fIopts\fR] \fIport\fR
+Fetch the complete certificate chain for
+.I slot
+(leaf first) and print it as hex DER.
+.RS
+.PP
+Example — decode with OpenSSL:
+.PP
+.nf
+cantil key\-chain 1 /dev/ttyACM0 | xxd \-r \-p | \\
+    openssl x509 \-inform DER \-text \-noout
+.fi
+.RE
+
+.TP
+\fBsign\-csr\-slot\fR \fIissuer_slot\fR \fIcsr.der\fR [\fIopts\fR] \fIport\fR
+Sign an external PKCS#10 CSR with the CA key in
+.I issuer_slot
+.RB ( SIGN_CSR_SLOT ,
+opcode 0x2A).  The resulting certificate DER is printed as hex.
+.RS
+.PP
+Example — save to file:
+.PP
+.nf
+cantil sign\-csr\-slot 1 codesign.csr.der /dev/ttyACM0 | \\
+    xxd \-r \-p > codesign.der
+.fi
+.RE
+
+.SS Session identity
+These commands manage the device's transport-identity session certificate — the
+X.509 cert that binds the device's FICR-derived serial to its Noise static key
+and is delivered inside every encrypted handshake.
+
+.TP
+\fBsession\-cert\fR [\fIopts\fR] \fIport\fR
+Fetch the current session certificate DER and print it as hex.
+.RS
+.PP
+Example — inspect with OpenSSL:
+.PP
+.nf
+cantil session\-cert /dev/ttyACM0 | xxd \-r \-p | \\
+    openssl x509 \-inform DER \-text \-noout
+.fi
+.RE
+
+.TP
+\fBsession\-csr\fR [\fIopts\fR] \fIport\fR
+Build and fetch a PKCS#10 CSR for the device session P-256 identity key.
+Use this to have the session certificate signed by an external CA; the CSR
+preserves the required X.509 extensions including the Noise X25519 binding.
+
+.TP
+\fBca\-cert\fR [\fIopts\fR] \fIport\fR
+Fetch the CA certificate (slot 0) DER and print it as hex.
+
+.TP
+\fBsession\-sign\fR \fIissuer_slot\fR [\fB\-\-force\fR] [\fIopts\fR] \fIport\fR
+Have the device CA-sign its own session certificate using the CA key in
+.IR issuer_slot
+.RB ( SIGN_SESSION_FROM_SLOT ,
+opcode 0x62).  The device must be UNLOCKED; a tap-confirm gesture is required.
+.RS
+.TP
+.B \-\-force
+Re-sign even if the session certificate is already CA-signed.
+.RE
+
+.TP
+\fBsession\-push\fR \fIcert.der\fR [\fB\-\-chain\fR \fIchain.der\fR] [\fB\-\-force\fR] [\fIopts\fR] \fIport\fR
+Install an externally-signed session certificate on the device
+.RB ( PUSH_SESSION_CERT ,
+opcode 0x63).  The device validates that the certificate's SPKI matches its
+stored P-256 identity key, that the Noise X25519 binding extension matches its
+Noise static key, and that the subject fields match the build constant.
+A tap-confirm gesture is required.
+.RS
+.TP
+\fB\-\-chain\fR \fIchain.der\fR
+Concatenated DER intermediate chain to install alongside the leaf certificate.
+.TP
+.B \-\-force
+Install even if a CA-signed session certificate is already present.
+.RE
+
+.SS Bond management
+.TP
+\fBclients\fR [\fIopts\fR] \fIport\fR
+List all bonded clients stored on the device, including their Curve25519
+public key (hex), kind (host / peer-device), creation timestamp, and friendly
+name (if set).
+
+.TP
+\fBunpair\fR \fIhex\-pubkey\fR [\fIopts\fR] \fIport\fR
+Remove the bond for the client identified by the 64-character hex Curve25519
+public key
+.RI ( hex\-pubkey ).
+Requires a tap-confirm gesture on the device.
+
+.TP
+\fBname\fR \fIhex\-pubkey\fR \fIname\fR [\fIopts\fR] \fIport\fR
+Set a friendly display name for the bonded client identified by
+.IR hex\-pubkey .
+
+.SH TRUST OPTIONS
+These options are accepted by all commands except
+.B list
+and
+.BR pair .
+
+.TP
+\fB\-\-trust\fR \fBnone\fR|\fBpin\fR|\fBca\fR|\fBca+cn\fR
+Set the client-side trust tier for this connection.  The default is
+.B pin
+when a session fingerprint is stored (see
+.BR pair ),
+otherwise
+.BR none .
+.RS
+.TP
+.B none
+Tier 1.  The Noise session is fully encrypted and mutually authenticated; the
+device certificate is not inspected.  Appropriate for local testing where
+device substitution is not a concern.
+.TP
+.B pin
+Tier 2.  The SHA-256 fingerprint of the device session certificate leaf must
+match the value stored by a prior
+.BR "cantil pair" .
+Best for single-user personal devices.
+.TP
+.B ca
+Tier 3.  The device certificate chain must validate to a CA loaded via
+\fB\-\-ca\-dir\fR or \fB\-\-ca\-cert\fR.
+Suitable for team or fleet deployments where all devices share a common issuing
+CA.
+.TP
+.B ca+cn
+Tier 4.  Tier 3 plus the certificate leaf CN must match the value supplied
+by \fB\-\-cn\fR or stored by a prior
+.BR "cantil pair" .
+Use in production fleets where per-device enforcement is required.
+.RE
+
+.TP
+\fB\-\-ca\-dir\fR \fIpath\fR
+Load all \fI*.der\fR files in \fIpath\fR as trust-store CA certificates
+(Tier 3/4).
+
+.TP
+\fB\-\-ca\-cert\fR \fIfile\fR
+Load a single DER-encoded CA certificate into the trust store (Tier 3/4).
+
+.TP
+\fB\-\-cn\fR \fIvalue\fR
+Expected leaf CN for Tier 4.  Overrides the value stored by
+.BR pair .
+
+.TP
+\fB\-\-client\-cert\fR \fIfile\fR
+DER-encoded client certificate to present during the Noise handshake (Method 4/5
+devices).  If omitted, the cert stored by a prior
+.B "cantil pair \-\-client\-cert"
+is used automatically.
+
+.TP
+\fB\-\-client\-chain\fR \fIfile\fR
+Optional DER chain file to accompany \fB\-\-client\-cert\fR.
+
+.SH TRUST TIERS
+Cantil separates the encrypted transport layer (Noise_XX — always active) from
+the certificate trust policy (client-controlled).  All four tiers provide full
+ChaCha20-Poly1305 encryption and mutual Noise authentication; the tiers differ
+only in what the client checks about the device certificate after the handshake.
+
+.TS
+allbox tab(|);
+c c l
+n n l.
+Tier|CLI name|When to use
+1|none|Local testing, native_sim, lab environments.
+2|pin|Personal devices — TOFU fingerprint set by \fBpair\fR.
+3|ca|Managed fleet — all devices share a CA cert.
+4|ca+cn|Production fleet — per-device CN enforcement.
+.TE
+
+.SH PAIRING METHODS
+The device-side pairing method is set at firmware build time via
+.BR CANTIL_PAIRING_METHOD .
+The release default is Method 2.
+
+.TS
+allbox tab(|);
+c l l.
+Method|Kconfig|Summary
+0|PAIRING_PROMISCUOUS|Any client accepted. Dev-only.
+1|PAIRING_TOFU|First client bonded silently.
+2|PAIRING_TAP_CONFIRM|Bond requires tap-confirm on device. \fIRelease default.\fR
+3|PAIRING_PASSKEY|6-digit passkey + tap-confirm.
+4|PAIRING_CA_ANCHOR|Client cert validated against device CA slot.
+5|PAIRING_CA_ANCHOR_PLUS_PASSKEY|Method 4 + Method 3.
+.TE
+
+.SH KEY STORE
+\fBcantil\fR stores client-side state under
+.IR ${XDG_CONFIG_HOME:-$HOME/.config}/cantil/ :
+
+.TS
+tab(|);
+l l.
+\fIclient_priv.bin\fR|Curve25519 client private key (mode 0600)
+\fIclient_pub.bin\fR|Curve25519 client public key
+\fIclient_cert.der\fR|Stored client certificate (written by \fBpair \-\-client\-cert\fR)
+\fIclient_chain.der\fR|Stored client certificate chain (optional)
+\fIdevices/<fp16>/\fR|Per-device subdirectory; \fIfp16\fR = SHA-256(device key)[0:8] hex
+\fI  device_pub.bin\fR|Pinned device static Noise public key
+\fI  session_fp.bin\fR|SHA-256 fingerprint of device session certificate leaf
+\fI  session_cn.bin\fR|Leaf CN from device session certificate (Tier 4 default)
+.TE
+
+Multiple devices are supported automatically: pairing a second device creates
+a new subdirectory without affecting the first device's stored data.
+Each subsequent command auto-selects the correct subdirectory by connecting
+with TOFU and matching the device's Noise static key.
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Error (message written to stderr).
+
+.SH EXAMPLES
+.SS First-time setup
+.nf
+# Discover attached devices:
+cantil list
+
+# Pair with a device and store its fingerprint:
+cantil pair /dev/ttyACM0
+
+# Check device health:
+cantil status /dev/ttyACM0
+.fi
+
+.SS CA hierarchy setup
+.nf
+# Unlock slot 0 (factory CA) and give it a proper subject:
+cantil unprotect 0 /dev/ttyACM0
+cantil provision\-ca \\
+    \-\-cn "Acme ROOT CA 0" \-\-o Acme \-\-ou "Trust Chain" \\
+    \-\-c US \-\-st California \-\-l "San Francisco" \\
+    \-\-validity 7300 \-\-path\-len 1 \\
+    /dev/ttyACM0
+
+# Provision subordinate CA in a new slot:
+cantil provision\-ca \-\-new \\
+    \-\-cn "Acme Sub CA 0-1" \-\-o Acme \-\-ou "Trust Chain" \\
+    \-\-c US \-\-st California \-\-l "San Francisco" \\
+    \-\-validity 3650 \-\-path\-len 0 \\
+    /dev/ttyACM0
+
+# Sign sub CA (slot 1) with root CA (slot 0), then protect both:
+cantil sign\-key\-slot 0 1 /dev/ttyACM0
+cantil protect 0 /dev/ttyACM0
+cantil protect 1 /dev/ttyACM0
+
+# Export sub CA chain for distribution to clients:
+cantil key\-chain 1 /dev/ttyACM0 | xxd \-r \-p > subca_chain.der
+
+# Sign an external code-signing CSR:
+cantil sign\-csr\-slot 1 codesign.csr.der /dev/ttyACM0 | \\
+    xxd \-r \-p > codesign.der
+.fi
+
+.SS Session identity (transport cert)
+.nf
+# Sign the device's own session cert with its on-device CA:
+cantil session\-sign 0 /dev/ttyACM0
+
+# Fetch for out-of-band fingerprint verification:
+cantil session\-cert /dev/ttyACM0 | xxd \-r \-p | \\
+    openssl x509 \-inform DER \-fingerprint \-noout
+
+# External CA: extract CSR, sign externally, push back:
+cantil session\-csr /dev/ttyACM0 | xxd \-r \-p > device.csr
+# ... sign device.csr with your CA ...
+cantil session\-push device_signed.der \-\-chain ca.der /dev/ttyACM0
+.fi
+
+.SS Fleet connections (Tier 3)
+.nf
+# Connect to any device whose cert chains to the fleet CA:
+cantil status \-\-trust ca \-\-ca\-cert fleet_ca.der /dev/ttyACM0
+
+# Connect with per-device CN enforcement (Tier 4):
+cantil status \-\-trust ca+cn \-\-ca\-cert fleet_ca.der /dev/ttyACM0
+.fi
+
+.SS Bond management
+.nf
+# List bonded clients on the device:
+cantil clients /dev/ttyACM0
+
+# Remove a specific bond (obtain hex pubkey from 'clients'):
+cantil unpair <64-char-hex-pubkey> /dev/ttyACM0
+
+# Give a bond a friendly name:
+cantil name <64-char-hex-pubkey> "laptop-work" /dev/ttyACM0
+.fi
+
+.SH FILES
+.TP
+.I ${XDG_CONFIG_HOME:-$HOME/.config}/cantil/
+Client key store directory.
+
+.SH SEE ALSO
+.BR openssl (1),
+.BR xxd (1)
+.PP
+Full documentation:
+.BR docs/transport-security.md
+(user guide),
+.BR docs/reference/protocol-and-client.md
+(CBOR wire protocol and libcantil API),
+.BR libcantil/include/cantil.h
+(public C API).
+
+.SH BUGS
+DER output is printed as hex without separators; pipe through
+.B "xxd \-r \-p"
+to obtain a binary DER file.
+.PP
+.B cantil list
+requires Linux
+.IR /sys/bus/usb/devices ;
+not available on macOS or Windows.
+
+.SH AUTHORS
+Cantil project contributors.

@@ -1,0 +1,56 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * TEST ONLY — deliberately misdeclares the QSPI storage partition.
+ *
+ * Not part of any shipping build. Used to verify, on real hardware, that a
+ * wrong storage partition cannot destroy a provisioned CA key. Static
+ * inspection is not sufficient for this: an earlier guard was verified by
+ * checking that no application object referenced fs_mkfs, and it still wiped
+ * the partition, because Zephyr's littlefs backend formats from inside
+ * fs_mount() unless FS_MOUNT_FLAG_NO_FORMAT is set.
+ *
+ * Usage:
+ *
+ *   scripts/build.sh --clean -- \
+ *       -DEXTRA_DTC_OVERLAY_FILE=firmware/tests/hardware/wrong_partition.overlay
+ *
+ * Neither guard symbol is needed here any more, and both are gone from the
+ * recipe on purpose:
+ *
+ *   - CANTIL_STORAGE_NO_AUTOFORMAT: production sets CONFIG_FILE_SYSTEM_MKFS=n,
+ *     which makes storage.c set FS_MOUNT_FLAG_NO_FORMAT unconditionally and
+ *     leaves fs_mkfs out of the link. Add it back only if you are testing a
+ *     build that turns MKFS on.
+ *   - CANTIL_NO_AUTO_PROVISION: removed. ca_init() no longer provisions in any
+ *     configuration, so the mount-succeeds-over-live-data case below cannot
+ *     mint a replacement CA regardless of how the build is configured.
+ *
+ * Expected on a provisioned device: fs_mount fails, storage_init logs the
+ * refusal, nothing is written, and the real filesystem at 0x0 still mounts
+ * when the correct build is reflashed.
+ *
+ * Pick an offset with no littlefs superblock. Two cautions, both learned the
+ * hard way on 2026-07-22:
+ *
+ *   - A region that a previous run of this test formatted now holds a valid
+ *     filesystem and will mount successfully, proving nothing. Move the
+ *     offset between runs.
+ *   - If the offset does mount, the device reads an empty CA slot. It used to
+ *     mint a new CA over live data at that point; it no longer does, because
+ *     no format is involved on that path and nothing in the format-side guards
+ *     catches it. Provisioning is CMD_PROVISION_CA only, and since 2026-07-23
+ *     that command is itself refused here: the mounted volume has no identity
+ *     marker and no CA key, which is exactly what a misdeclared partition
+ *     looks like. Expect ERR_VOLUME_INVALID (17) and 'cantil status' reporting
+ *     UNMARKED. A tap cannot override it.
+ *
+ * If the offset mounts and the marker is present but disagrees — the case you
+ * get by pointing a marked device's build at a different marked volume — the
+ * device enters degraded mode: DEVICE_STATUS and UPDATE_FIRMWARE only, and
+ * RESET_DEVICE is refused as well, deliberately. Recovery is to reflash a
+ * build with the correct partition; nothing on either volume is erased.
+ */
+&cantil_storage {
+	reg = <0x00180000 0x00080000>;
+};

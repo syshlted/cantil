@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Pairing conformance for the passkey trust tier.
+# Mirrors firmware/tests/pairing_passkey/CMakeLists.txt (scripts/test.sh stays the
+# reference runner). See //firmware/tests:ztest.bzl.
+
+load("//firmware/tests:ztest.bzl", "cantil_ztest", "STORAGE_DEPS", "CBOR_DEPS", "CBOR_SRCS", "CRYPTO_SRCS", "STORAGE_SRCS", "WOLFSSL_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+cantil_ztest(
+    name = "pairing_passkey",
+    srcs = [
+        "src/main.c",
+        "src/gesture_stub.c",
+        "src/led_stub.c",
+        "src/session_stub.c",
+        "//firmware:src/clients/pairing.c",
+        "//firmware:src/clients/client_bond.c",
+    ] + STORAGE_SRCS + CRYPTO_SRCS + CBOR_SRCS,
+    deps = WOLFSSL_DEPS + STORAGE_DEPS + CBOR_DEPS,
+)

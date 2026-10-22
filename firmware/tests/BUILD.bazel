@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Package boundary marker plus the fixtures shared by the ztest suites.
+#
+# The boundary matters: Bazel app-discovery (zephyr_setup) does a recursive
+# `find <apps_dir> -name prj.conf`, and every firmware/tests/*/prj.conf would
+# otherwise resolve to the nearest enclosing package. Each suite now carries
+# its own BUILD.bazel, so each is its own app; this package holds no prj.conf
+# and is therefore not an app itself.
+#
+# Suites are declared with //firmware/tests:ztest.bzl and run with
+#   bazelisk test //firmware/tests/... --config=sim
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# The sh_test body behind `openssl_gate = True` in ztest.bzl. Lives here rather
+# than in each suite package so there is one copy; source files need an
+# explicit export (default_visibility covers rules only).
+exports_files(["openssl_gate_runner.sh"])
+
+# test_pki.h / test_artifacts.h — the shared PKI fixtures and the OpenSSL-gate
+# artifact writer (a no-op unless CANTIL_TEST_ARTIFACT_DIR is set).
+cc_library(
+    name = "test_common",
+    testonly = True,
+    hdrs = glob(["common/*.h"]),
+    includes = ["common"],
+)

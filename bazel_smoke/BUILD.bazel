@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Phase-1 Bazel smoke test app. Proves a board package + toolchain + SoC + link
+# under Bazel in isolation from Cantil's modules. Mirrors zephyr-bazel's
+# examples/nrf52 BUILD.
+#
+# NOT deletable once //firmware:cantil builds, despite what this comment used to
+# say: it is the only way to exercise a board package whose real app does not
+# build yet, which is the case for every non-XIAO board until BLE is enabled
+# (docs/roadmap/bazel-migration.md, "Board packages"). Delete it when the
+# firmware builds for every board Cantil claims to support.
+
+load("@zephyr//:cc.bzl", "zephyr_app", "zephyr_cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+zephyr_app(
+    name = "smoke",
+    deps = [
+        ":app_main",
+    ],
+)
+
+label_flag(
+    name = "pw_assert_backend_impl",
+    build_setting_default = "@pigweed//pw_assert_log:assert_backend",
+)
+
+zephyr_cc_library(
+    name = "app_main",
+    srcs = ["main.c"],
+)

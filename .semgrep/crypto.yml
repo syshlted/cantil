@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Project-specific semgrep rules for a CA that holds key material. These
+# encode conventions the generic rulesets cannot know about; CI runs them
+# next to the registry's p/c ruleset (see .github/workflows/security.yml).
+# Run locally: semgrep --config .semgrep --error firmware common libcantil
+rules:
+  - id: cantil-memset-secret
+    languages: [c]
+    severity: WARNING
+    message: >-
+      memset() on key material is a dead store the compiler may delete.
+      Use cantil_zeroize() (crypto/zeroize.h), which is not elidable.
+    patterns:
+      - pattern: memset($BUF, 0, ...)
+      - metavariable-regex:
+          metavariable: $BUF
+          regex: (?i).*(priv|secret|psk|seed|passkey|storage_key|session_key|_key|^key|^dh|shared).*
+    paths:
+      exclude: ["**/tests/**", "**/test_*"]
+
+  - id: cantil-memcmp-secret
+    languages: [c]
+    severity: WARNING
+    message: >-
+      memcmp() returns at the first differing byte, which leaks how much of
+      a secret matched. Compare MACs, tags, passkeys and PSKs in constant
+      time. (Comparing public keys is fine and is not flagged.)
+    patterns:
+      - pattern-either:
+          - pattern: memcmp($A, $B, ...)
+          - pattern: strcmp($A, $B)
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i).*(mac|tag|hmac|digest|passkey|pin_|secret|psk|token|cookie).*
+    paths:
+      exclude: ["**/tests/**", "**/test_*"]
+
+  - id: cantil-non-csprng-random
+    languages: [c]
+    severity: ERROR
+    message: >-
+      rand()/random() are not cryptographically secure. Use the hardware
+      entropy source (sys_csrand_get / the wolfCrypt RNG).
+    pattern-either:
+      - pattern: rand()
+      - pattern: srand(...)
+      - pattern: random()
+      - pattern: srandom(...)
+      - pattern: sys_rand32_get()
+      - pattern: sys_rand_get(...)
+    paths:
+      exclude: ["**/tests/**", "**/test_*"]
+
+  - id: cantil-unbounded-string-copy
+    languages: [c]
+    severity: ERROR
+    message: >-
+      Unbounded string function on possibly attacker-controlled input
+      (this code parses untrusted CBOR, X.509 and BLE/USB frames). Use a
+      length-checked copy and handle truncation explicitly.
+    pattern-either:
+      - pattern: strcpy(...)
+      - pattern: strcat(...)
+      - pattern: sprintf(...)
+      - pattern: vsprintf(...)
+      - pattern: gets(...)

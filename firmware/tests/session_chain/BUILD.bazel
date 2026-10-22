@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Session identity-chain conformance over the Noise loopback.
+# Mirrors firmware/tests/session_chain/CMakeLists.txt (scripts/test.sh stays the
+# reference runner). See //firmware/tests:ztest.bzl.
+
+load("//firmware/tests:ztest.bzl", "cantil_ztest", "CBOR_DEPS", "CBOR_SRCS", "WOLFSSL_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+cantil_ztest(
+    name = "session_chain",
+    srcs = [
+        "src/main.c",
+        "src/test_inject.c",
+        "//firmware/tests/noise_session:src/loopback.c",
+        "//firmware:src/session/session.c",
+        "//firmware:src/session/noise_crypto_wolfssl.c",
+        "//firmware:src/crypto/wc_rand.c",
+        "//firmware:src/crypto/zeroize.c",
+    ] + CBOR_SRCS,
+    deps = [
+        "//firmware:fw_session_headers",
+        "//firmware/tests/noise_session:loopback_headers",
+    ] + WOLFSSL_DEPS + CBOR_DEPS,
+)

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Pairing conformance for the CA-anchor + passkey trust tier.
+# Mirrors firmware/tests/pairing_ca_anchor_passkey/CMakeLists.txt (scripts/test.sh stays the
+# reference runner). See //firmware/tests:ztest.bzl.
+
+load("//firmware/tests:ztest.bzl", "cantil_ztest", "STORAGE_DEPS", "CA_SRCS", "CBOR_DEPS", "CBOR_SRCS", "CRYPTO_SRCS", "STORAGE_SRCS", "WOLFSSL_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+cantil_ztest(
+    name = "pairing_ca_anchor_passkey",
+    srcs = [
+        "src/main.c",
+        "src/session_stub.c",
+        "src/gesture_stub.c",
+        "src/led_stub.c",
+        "//firmware:src/clients/pairing.c",
+        "//firmware:src/clients/client_bond.c",
+    ] + CA_SRCS + CRYPTO_SRCS + STORAGE_SRCS + CBOR_SRCS,
+    deps = [
+        "//firmware/tests:test_common",
+    ] + WOLFSSL_DEPS + CBOR_DEPS + STORAGE_DEPS,
+)

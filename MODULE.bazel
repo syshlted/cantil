@@ -1,0 +1,243 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Cantil firmware — Bazel build (Phase 3, docs/roadmap/bazel-migration.md).
+#
+# This is additive: the CMake/west build (scripts/build.sh) remains the
+# reference build. Adapted from Google's zephyr-bazel examples/MODULE.bazel.
+#
+# The Zephyr pin here (684c9e8f) is the v4.4.0 tag commit — identical to
+# firmware/west.yml — and is exactly what zephyr-bazel itself pins, so Bazel
+# builds the same tree the CMake build proves.
+
+module(
+    name = "cantil",
+    version = "0.2.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_platform", version = "0.1.0")
+bazel_dep(name = "rules_python", version = "1.8.3")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "zephyr-bazel")
+bazel_dep(name = "protobuf", version = "33.4")
+
+# Pigweed dependency (inlined rather than include()'d, so the repo root does not
+# need to be a Bazel package — a root BUILD.bazel would make app-discovery map
+# every stray prj.conf, including firmware/prj.conf and the CMake build_*/ dirs,
+# to the root package). Pin matches zephyr-bazel's pigweed_dep.MODULE.bazel.
+bazel_dep(name = "pigweed")
+git_override(
+    module_name = "pigweed",
+    commit = "9ae22d958cd9149dd2e7bdfeb24d0be4fca4154e",
+    remote = "https://pigweed.googlesource.com/pigweed/pigweed",
+)
+
+# Module overrides
+# ================
+# zephyr-bazel is fetched and patched by Bazel itself — no machine-local
+# checkout, no setup script. The patch is the same 22-file overlay that
+# scripts/setup_bazel.sh used to apply by hand (board package, the three
+# external module BUILDs, the Kconfig/DTS generator fixes, the USB device_next
+# and native_sim bottom-half gaps); see docs/roadmap/bazel-migration.md for
+# what each hunk is for and why it is a candidate to upstream.
+#
+# The commit is the SHA the patch was generated against. Advancing it means
+# regenerating the patch:
+#
+#   git -C <checkout> fetch && git checkout <new-sha>
+#   git apply bazel/zephyr-bazel-cantil.patch    # fix any rejects
+#   git add -N . && git diff > bazel/zephyr-bazel-cantil.patch
+git_override(
+    module_name = "zephyr-bazel",
+    commit = "a7ff70308766d390bd89e48687f3ff9438693217",
+    patch_strip = 1,
+    patches = ["//:bazel/zephyr-bazel-cantil.patch"],
+    remote = "https://pigweed.googlesource.com/zephyr/zephyr-bazel",
+)
+
+# Configure Pigweed to use zephyr-bazel
+# =====================================
+pw_zephyr_config = use_extension("@pigweed//zephyr/config:pw_zephyr_config.bzl", "pw_zephyr_config")
+
+override_repo(
+    pw_zephyr_config,
+    kconfig = "zephyr_kconfig",
+    zephyr = "zephyr",
+    zephyr_version = "zephyr_version",
+)
+
+# Toolchain registration
+# ======================
+register_toolchains(
+    "@zephyr-bazel//toolchain:all",
+    "@pigweed//pw_toolchain/host_clang:host_cc_toolchain_linux",
+    "@pigweed//pw_toolchain/host_clang:host_cc_toolchain_macos",
+    dev_dependency = True,
+)
+
+# Register native_sim execution platform, so it can be used for tests.
+register_execution_platforms(
+    "@zephyr//boards/native/native_sim:native",
+)
+
+# Zephyr setup
+# ============
+zephyr_patch = use_extension("@zephyr-bazel//:setup.bzl", "zephyr_patch_file")
+zephyr_patch.checkout(
+    # v4.4.0 tag commit — matches firmware/west.yml and zephyr-bazel's own pin.
+    # No patches: the two zephyr-bazel example patches (Atmosic ADC bindings, a
+    # Cortex-M systick tweak) are neither needed for nRF52840 nor applied by the
+    # reference CMake build, which builds this exact tag unpatched.
+    #
+    # The marker below is the machine-checkable half of "west.yml and this file
+    # pin the same tree" — //scripts:pin_agreement_test compares it against the
+    # identical marker in firmware/west.yml, and against both files' real pins.
+    # Moving the pin means updating the marker in BOTH files, and verifying by
+    # hand (with a network) that the tag still peels to the commit:
+    #   git ls-remote --tags https://github.com/zephyrproject-rtos/zephyr v4.4.0^{}
+    #
+    # PIN: zephyr v4.4.0 684c9e8f32e4373a21098559f748f06915f950c9
+    commit = "684c9e8f32e4373a21098559f748f06915f950c9",
+)
+
+# Get access to the patched zephyr repo.
+use_repo(zephyr_patch, "zephyr", "zephyr_version")
+
+inject_repo(zephyr_patch, "hal_nordic")
+inject_repo(zephyr_patch, "cmsis_6")
+
+# Make the littlefs / segger checkouts visible *inside* @zephyr, so Zephyr's
+# in-tree glue can pull their headers: subsys/fs/littlefs_fs.c needs <lfs_util.h>
+# and subsys/logging/backends/log_backend_rtt.c needs <SEGGER_RTT.h>, and
+# @zephyr cannot otherwise reference an external module repo. The patched
+# @zephyr BUILDs add @littlefs//:headers / @segger//:headers as gated deps.
+inject_repo(zephyr_patch, "littlefs")
+inject_repo(zephyr_patch, "segger")
+
+new_git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "new_git_repository")
+
+new_git_repository(
+    name = "cmsis_6",
+    build_file = "@zephyr-bazel//modules:cmsis_6.BUILD",
+    commit = "30a859f44ef8ab4dc8f84b03ed586fd16ccf9d74",
+    remote = "https://github.com/zephyrproject-rtos/CMSIS_6.git",
+)
+
+new_git_repository(
+    name = "hal_nordic",
+    build_file = "@zephyr-bazel//modules:hal_nordic.BUILD",
+    commit = "44fd3d44b15cb75f80a25b4679f91d2787e28664",
+    remote = "https://github.com/zephyrproject-rtos/hal_nordic.git",
+)
+
+# ── Cantil's three non-Zephyr modules ───────────────────────────────────────
+# Commits match the west workspace (firmware/west.yml pins wolfSSL directly;
+# littlefs/segger come from Zephyr's manifest at the v4.4.0 pin). Their sources
+# are compiled by //firmware, not auto-linked — see firmware/BUILD.bazel.
+#
+# wolfSSL is additionally listed in zephyr_setup.modules below so discovery
+# sources its Kconfig (CONFIG_WOLFSSL etc.); it has no zephyr_module target, so
+# it stays config-only (Kconfig, no auto-link). littlefs and segger need no
+# discovery — their Kconfig lives in @zephyr (subsys/fs, modules/segger).
+# PIN: wolfssl v5.9.2-stable ac01707f552c611fbd135cc723b2682b3e7f80f2
+new_git_repository(
+    name = "wolfssl",
+    build_file = "@zephyr-bazel//modules:wolfssl.BUILD",
+    commit = "ac01707f552c611fbd135cc723b2682b3e7f80f2",  # v5.9.2-stable
+    remote = "https://github.com/wolfSSL/wolfssl.git",
+)
+
+new_git_repository(
+    name = "littlefs",
+    build_file = "@zephyr-bazel//modules:littlefs.BUILD",
+    commit = "8f5ca347843363882619d8f96c00d8dbd88a8e79",
+    remote = "https://github.com/zephyrproject-rtos/littlefs.git",
+)
+
+new_git_repository(
+    name = "segger",
+    build_file = "@zephyr-bazel//modules:segger.BUILD",
+    commit = "50892fdbcf2f570e67baa72b8894a66b16946f72",
+    remote = "https://github.com/zephyrproject-rtos/segger.git",
+)
+
+# Host C toolchain for //libcantil
+# ===============================
+# The client is a plain host build that links the system libsodium and
+# libcrypto. Pigweed's host_clang — registered above and otherwise the default
+# host toolchain here — ships its own sysroot, in which those headers do not
+# exist. Bazel's auto-detected local toolchain uses the host's, so
+# `--config=host` (see .bazelrc) points at this.
+cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension")
+use_repo(cc_configure, "local_config_cc", "local_config_cc_toolchains")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    configure_coverage_tool = True,
+    is_default = True,
+    python_version = "3.11",
+)
+use_repo(python, "pythons_hub")
+
+# Pip dependencies are provided by zephyr-bazel
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+use_repo(pip, "zephyr_bazel_pip_deps")
+
+zephyr_setup = use_extension("@zephyr-bazel//:setup.bzl", "zephyr_setup")
+zephyr_setup.env(
+    # Explicit app package dirs, not the repo root — keeps app-discovery
+    # (find <dir> -name prj.conf) from scanning the CMake build_*/ trees.
+    apps_dirs = [
+        "//bazel_smoke:BUILD.bazel",
+        "//firmware:BUILD.bazel",
+        # The two bench images. Listed explicitly for the same reason as the
+        # test suites: each is its own Zephyr app with its own prj.conf, and
+        # naming them here re-runs discovery when one is added — a new app
+        # package is otherwise invisible to an already-fetched app index.
+        "//firmware/factory:BUILD.bazel",
+        "//firmware/wipe_diag:BUILD.bazel",
+        # Each firmware/tests/<suite> is its own Zephyr app (own prj.conf,
+        # Kconfig and native_sim overlay); listed explicitly so discovery is
+        # not left to the nearest-enclosing-package heuristic.
+        "//firmware/tests:BUILD.bazel",
+    ],
+    manual_boards = [
+        "xiao_ble/nrf52840/sense",
+        "nrf52833dk/nrf52833",
+        # The other nRF52840 boards Cantil declares configs for
+        # (firmware/boards/*.conf). A bare board name matches all its
+        # variants, so these cover e.g. adafruit_feather_nrf52840/nrf52840/uf2.
+        #
+        # These have board *packages* only — //firmware:cantil does not build
+        # for them yet, on either build system: all three confs set
+        # CONFIG_BT_NUS=y and src/transport/transport_ble.c includes the NCS
+        # <bluetooth/services/nus.h>. Upstream Zephyr's NUS is
+        # CONFIG_BT_ZEPHYR_NUS at <zephyr/bluetooth/services/nus.h>. See the
+        # BLE enablement item in docs/open-questions.md. The packages are
+        # verified against //bazel_smoke:smoke meanwhile.
+        "nrf52840dk",
+        "nrf52840dongle",
+        "adafruit_feather_nrf52840",
+        # ztest suites (firmware/tests/*) run on the 64-bit native_sim variant,
+        # matching scripts/test.sh. Plain native_sim/native leaves CONFIG_64BIT
+        # unset while the host toolchain still compiles 64-bit.
+        "native_sim/native/64",
+    ],
+    modules = [
+        "@hal_nordic//:zephyr/module.yml",
+        "@pigweed//zephyr:module.yml",
+        # Config-only: sources CONFIG_WOLFSSL / WOLFSSL_BUILTIN /
+        # WOLFSSL_SETTINGS_FILE. Sources compiled by //firmware:wolfssl.
+        "@wolfssl//:zephyr/module.yml",
+    ],
+)
+use_repo(
+    zephyr_setup,
+    "zephyr_index",
+    "zephyr_kconfig",
+    "zephyr_state",
+)
+
+zephyr_setup_apps = use_extension("@zephyr-bazel//:setup.bzl", "zephyr_setup_apps")

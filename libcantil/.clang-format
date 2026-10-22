@@ -1,0 +1,4 @@
+# libcantil is the host-side client and keeps its own 4-space style, not
+# the Zephyr style the firmware uses. Define a real style here before
+# turning formatting back on for it.
+DisableFormat: true

@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Blocking CI: the same checks as lefthook (pre-commit lint, build + test),
+# run somewhere nobody can skip them. Scanners and anything slow or noisy
+# live in security.yml.
+#
+# Actions are pinned by commit SHA (the tag is in the trailing comment);
+# dependabot (.github/dependabot.yml) bumps them.
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Runs lefthook's own pre-commit config over the files this push/PR
+  # touches, so local and CI checks cannot drift apart. Changed files only:
+  # the tree carries pre-existing lint debt (see docs/open-questions.md) that
+  # a whole-tree run would report on day one. The soft reset makes the diff
+  # look staged, which is what every lefthook job here keys off.
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+      - name: Install lint tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cppcheck
+          pip install \
+            "lefthook==2.1.14" \
+            "clang-format==$(cat .clang-format-version)" \
+            shellcheck-py ruff
+          go install github.com/bazelbuild/buildtools/buildifier@v8.5.1
+          go install github.com/gitleaks/gitleaks/v8@v8.30.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Stage the changed files
+        id: stage
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-$PUSH_BASE}"
+          # A new branch has an all-zero "before"; fall back to the parent.
+          case "$base" in ""|0000000000000000000000000000000000000000)
+            base="$(git rev-parse --verify -q HEAD~1 || true)" ;; esac
+          # No base to diff against: a root commit, or a force-push whose
+          # old tip is not an ancestor of the new one. Nothing to ratchet
+          # against, so skip rather than lint the whole tree.
+          if [ -z "$base" ] || ! git merge-base --is-ancestor "$base" HEAD; then
+            echo "::notice::no comparable base commit; skipping changed-file lint"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git reset --soft "$base"
+          git diff --cached --name-only
+      - name: lefthook pre-commit
+        if: steps.stage.outputs.skip != 'true'
+        run: lefthook run pre-commit
+
+  # REUSE 3.3: every file has a license and copyright, every license used has
+  # its text in LICENSES/. Files that cannot carry a header are covered by
+  # REUSE.toml.
+  reuse:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - run: pip install "reuse==6.2.0"
+      - run: reuse lint
+
+  # scripts/build.sh and test.sh are what a developer runs, so CI runs them
+  # too. Bazel fetches Zephyr, the Zephyr SDK and the modules itself.
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: bazel-contrib/setup-bazel@4fd964a13a440a8aeb0be47350db2fc640f19ca8 # 0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+      - name: Host packages (system OpenSSL for libcantil and the DER gates)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libssl-dev openssl
+      - name: Build firmware and check ELF invariants
+        run: sh scripts/build.sh
+      - name: ztest suites, OpenSSL gates, pin agreement
+        run: sh scripts/test.sh
+      - name: Host client
+        run: bazelisk test //libcantil/... --config=host
+      - name: Locate the UF2
+        run: |
+          uf2="$(bazelisk cquery //firmware:cantil.uf2 --config=xiao \
+            --output=files 2>/dev/null | tail -1)"
+          mkdir -p out && cp -L "$(bazelisk info execution_root)/$uf2" out/
+          sha256sum out/*.uf2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cantil-uf2
+          path: out/*.uf2
+          if-no-files-found: error

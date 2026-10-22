@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Canonical CBOR codec shared by the firmware and libcantil (host). For the
+# Bazel firmware build it is compiled as part of //firmware:app_lib; this
+# package just exposes the source + header as labels, since Bazel srcs cannot
+# reach across package boundaries with `../` paths.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "cantil_cbor.c",
+    "cantil_cbor.h",
+])
+
+# Header-only target so a compiling package can put common/cbor on its include
+# path (cantil_cbor.h) without hard-coding a repo-relative path.
+cc_library(
+    name = "cbor_headers",
+    hdrs = ["cantil_cbor.h"],
+    includes = ["."],
+)
