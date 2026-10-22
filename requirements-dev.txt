@@ -28,5 +28,5 @@ python-magic
 reuse
 tabulate
 unidiff
-west>=0.14.0
+west>=1.5.0
 yamllint
